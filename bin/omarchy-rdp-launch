@@ -59,8 +59,10 @@ done
 
 [[ -n "$id" ]] || die "usage: omarchy-rdp-launch <connection-id> [--dry-run]" 64
 [[ "$id" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "invalid connection id: $id" 64
-[[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
 [[ -x "$JQ" ]] || die "jq not found at $JQ"
+# The xfreerdp3 check lives with the paths that actually run it. --dry-run only
+# renders the argument list, and being able to inspect that on a machine where
+# FreeRDP is not installed yet is precisely when it is most useful.
 [[ -r "$CONFIG_FILE" ]] || die "no config at $CONFIG_FILE"
 
 # ------------------------------------------------------------------ the config
@@ -132,6 +134,8 @@ if (( dry_run )); then
   exit 0
 fi
 
+[[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
+
 # --------------------------------------------------------------- the password
 
 # From here on `password` is the only copy. It goes into the fd-3 list and
@@ -146,6 +150,7 @@ unset password
 # --------------------------------------------------------------------- test
 
 if (( test_only )); then
+  [[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
   # Quiet: a probe should say nothing and mean it through its exit code.
   args+=("+auth-only" "/log-level:OFF")
   "$XFREERDP" /args-from:fd:3 3< <(printf '%s\n' "${args[@]}") >/dev/null 2>&1
