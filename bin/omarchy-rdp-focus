@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Focus the window of a running RDP session.
+#
+#   omarchy-rdp-focus <connection-id>
+#
+# Hyprland 0.56 moved `hyprctl dispatch` to a Lua interface, which turned the
+# older form into a silent no-op:
+#
+#   $ hyprctl dispatch focuswindow class:omarchy-rdp-example
+#   error: [string "return hl.dispatch(focuswindow class:omarchy-...)"]:1:
+#          ')' expected near 'class'
+#
+# So the Lua call is tried first, with the legacy dispatcher kept as a fallback
+# for older Hyprland — the same belt-and-braces omarchy's own focus scripts use.
+#
+# The Lua dispatcher cannot be trusted for success: given a selector that matches
+# nothing it prints `warning: hl.focus: window not found` and still exits 0. That
+# is why the window is confirmed against the client list first, and why the
+# dispatcher's output is inspected rather than its exit status.
+set -uo pipefail
+
+HYPRCTL=/usr/bin/hyprctl
+JQ=/usr/bin/jq
+
+die() { printf 'omarchy-rdp-focus: %s\n' "$1" >&2; exit "${2:-1}"; }
+
+id=${1:-}
+[[ -n $id ]] || die "usage: omarchy-rdp-focus <connection-id>" 64
+[[ $id =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "invalid connection id: $id" 64
+[[ -x $HYPRCTL ]] || die "hyprctl not found at $HYPRCTL"
+[[ -x $JQ ]] || die "jq not found at $JQ"
+
+wm_class="omarchy-rdp-$id"
+selector="class:$wm_class"
+
+# `initialClass` is the class at map time, which is what /wm-class sets, so it
+# stays correct even if the window changes its class later.
+if ! "$HYPRCTL" clients -j 2>/dev/null \
+    | "$JQ" -e --arg c "$wm_class" 'any(.[]; .initialClass == $c or .class == $c)' >/dev/null; then
+  die "no window for '$id' — is the session connected?"
+fi
+
+out=$("$HYPRCTL" dispatch "hl.dsp.focus({ window = \"$selector\" })" 2>&1)
+case "$out" in
+  *"not found"*|*error*) ;;
+  *) exit 0 ;;
+esac
+
+# Hyprland older than the Lua dispatcher.
+"$HYPRCTL" dispatch focuswindow "$selector" >/dev/null 2>&1 && exit 0
+
+die "hyprctl could not focus the window for '$id'"

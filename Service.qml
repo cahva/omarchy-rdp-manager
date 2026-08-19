@@ -34,6 +34,7 @@ Item {
   readonly property string launchScript: sourceDir + "/bin/omarchy-rdp-launch"
   readonly property string statusScript: sourceDir + "/bin/omarchy-rdp-status"
   readonly property string disconnectScript: sourceDir + "/bin/omarchy-rdp-disconnect"
+  readonly property string focusScript: sourceDir + "/bin/omarchy-rdp-focus"
   readonly property string secretScript: sourceDir + "/bin/omarchy-rdp-secret"
 
   readonly property string configDir: home + "/.config/omarchy-rdp"
@@ -287,9 +288,12 @@ Item {
     schedulePoll(500)
   }
 
+  // Delegated to a helper because focusing correctly is no longer a one-liner:
+  // Hyprland 0.56 moved `hyprctl dispatch` to a Lua interface, so the obvious
+  // `dispatch focuswindow class:...` is a Lua syntax error that fails silently,
+  // and the Lua replacement exits 0 even when it matches nothing.
   function focusSession(id) {
-    Quickshell.execDetached(["/usr/bin/hyprctl", "dispatch", "focuswindow",
-                             "class:" + Model.wmClassFor(id)])
+    Quickshell.execDetached([service.focusScript, String(id)])
   }
 
   // ------------------------------------------------------------ pending merge

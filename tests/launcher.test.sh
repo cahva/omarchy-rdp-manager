@@ -117,6 +117,12 @@ refute "accepted a path-traversal id"       bin/omarchy-rdp-launch '../escape' -
 refute "accepted an unknown id"             bin/omarchy-rdp-launch nosuchconnection --dry-run
 refute "accepted a missing id"              bin/omarchy-rdp-launch --dry-run
 
+# The focus helper must refuse the same shapes, and must not claim success for a
+# session that has no window.
+refute "focus helper accepted an invalid id"      bin/omarchy-rdp-focus 'Bad Id'
+refute "focus helper accepted a missing id"       bin/omarchy-rdp-focus
+refute "focus helper focused a nonexistent window" bin/omarchy-rdp-focus definitely-not-running
+
 # The secret helper must refuse the same shapes.
 refute "secret helper accepted an invalid id"     bin/omarchy-rdp-secret lookup 'Bad Id'
 refute "secret helper accepted an unknown action" bin/omarchy-rdp-secret bogus-action someid

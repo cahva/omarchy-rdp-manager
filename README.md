@@ -215,6 +215,7 @@ bin/omarchy-rdp-launch my-server              # connect
 bin/omarchy-rdp-launch my-server --dry-run    # print the FreeRDP args, password redacted
 bin/omarchy-rdp-launch my-server --test       # +auth-only probe; exit code is the answer
 bin/omarchy-rdp-status                        # one JSON line describing every session
+bin/omarchy-rdp-focus my-server               # focus the session window
 bin/omarchy-rdp-disconnect my-server          # close a session
 ```
 
@@ -239,7 +240,12 @@ windowrulev2 = idleinhibit always, class:^(omarchy-rdp-.*)$
 
 That class is also how the plugin distinguishes *connecting* from *connected*:
 FreeRDP maps no window until the connection actually succeeds, so window presence is
-a far better signal than the process merely being alive.
+a far better signal than the process merely being alive. Focusing a session switches
+to its workspace, so the class is all the plugin needs to find it again.
+
+If you are on Hyprland older than 0.56, note that `hyprctl dispatch` gained a Lua
+interface in 0.56 and `bin/omarchy-rdp-focus` prefers it, falling back to the
+pre-0.56 dispatcher.
 
 ## Sessions outlive the shell
 

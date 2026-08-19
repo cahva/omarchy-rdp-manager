@@ -152,6 +152,28 @@ test("the plugin id is namespaced and lowercase", function () {
   assert.ok(manifest.id.indexOf(".") !== -1, "expected a namespaced id")
 })
 
+test("no helper uses the pre-0.56 hyprctl dispatch form", function () {
+  // Hyprland 0.56 moved `hyprctl dispatch` to a Lua interface, so
+  // `dispatch focuswindow class:foo` became a Lua syntax error that fails
+  // silently — the Focus button did nothing at all. The Lua form must come first
+  // and any legacy call must only ever be a fallback behind it.
+  fs.readdirSync(path.join(root, "bin")).forEach(function (name) {
+    var text = fs.readFileSync(path.join(root, "bin", name), "utf8")
+    if (text.indexOf("focuswindow") === -1) return
+    assert.ok(text.indexOf("hl.dsp.focus") !== -1,
+      name + " calls focuswindow without trying the Lua hl.dsp.focus form first")
+  })
+  // The QML must not dispatch directly; it goes through the helper.
+  ;["Service.qml", "Panel.qml"].forEach(function (file) {
+    var text = fs.readFileSync(path.join(root, file), "utf8")
+    var line = text.split("\n").find(function (l) {
+      return l.indexOf("\"focuswindow\"") !== -1
+    })
+    assert.strictEqual(line, undefined,
+      file + " dispatches focuswindow directly instead of using bin/omarchy-rdp-focus")
+  })
+})
+
 test("no helper falls back to a world-writable state directory", function () {
   // omarchy-rdp-disconnect turns a file's contents into a SIGTERM, so a state
   // directory another local user can write to would let them pick the target.
