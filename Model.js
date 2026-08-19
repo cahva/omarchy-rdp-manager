@@ -1,4 +1,4 @@
-// Pure state logic for cahva.rdp-manager.
+// Pure state logic for io.github.cahva.rdp-manager.
 //
 // Everything here is a plain function of its arguments: no QML types, no
 // clock read that is not passed in, no file access. That is what makes it

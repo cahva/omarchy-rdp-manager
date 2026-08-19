@@ -15,15 +15,15 @@ import "Model.js" as Model
 // and form fields — the things that genuinely differ per screen.
 Panel {
   id: root
-  moduleName: "cahva.rdp-manager"
+  moduleName: "io.github.cahva.rdp-manager"
 
-  // Service.qml owns the `cahva.rdp-manager` IPC target. A widget registering it
+  // Service.qml owns the `io.github.cahva.rdp-manager` IPC target. A widget registering it
   // would register it once per monitor, and only the first registration is used.
   manageIpc: false
 
   // The host may replace moduleName with an instance id; keep the manifest id
   // stable for registry lookups.
-  readonly property string manifestPluginId: "cahva.rdp-manager"
+  readonly property string manifestPluginId: "io.github.cahva.rdp-manager"
 
   readonly property var svc: bar && bar.shell && typeof bar.shell.serviceFor === "function"
     ? bar.shell.serviceFor(manifestPluginId)

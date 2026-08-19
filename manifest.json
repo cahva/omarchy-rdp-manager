@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "cahva.rdp-manager",
+  "id": "io.github.cahva.rdp-manager",
   "name": "RDP Manager",
   "version": "0.1.0",
   "author": "cahva",

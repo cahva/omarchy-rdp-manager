@@ -50,13 +50,13 @@ secret-tool search --all service omarchy-rdp >/dev/null && echo "keyring ok"
 To place or move the bar icon:
 
 ```bash
-omarchy bar move cahva.rdp-manager --after omarchy.clock
+omarchy bar move io.github.cahva.rdp-manager --after omarchy.clock
 ```
 
 ## Remove
 
 ```bash
-omarchy plugin remove cahva.rdp-manager
+omarchy plugin remove io.github.cahva.rdp-manager
 ```
 
 That takes the bar widget out of `shell.json` and deletes the plugin directory. It
@@ -167,8 +167,8 @@ Edits are picked up live — no reload needed. Notes:
 Widget preferences live on the widget's entry in `~/.config/omarchy/shell.json`:
 
 ```bash
-omarchy bar set cahva.rdp-manager notifyOnDisconnect false
-omarchy bar set cahva.rdp-manager hideWhenIdle true
+omarchy bar set io.github.cahva.rdp-manager notifyOnDisconnect false
+omarchy bar set io.github.cahva.rdp-manager hideWhenIdle true
 ```
 
 | Setting | Default | Effect |
@@ -178,7 +178,7 @@ omarchy bar set cahva.rdp-manager hideWhenIdle true
 
 ## Using it
 
-Click the bar icon, or bind `omarchy-shell shell toggle cahva.rdp-manager`.
+Click the bar icon, or bind `omarchy-shell shell toggle io.github.cahva.rdp-manager`.
 
 | State | Bar icon |
 |---|---|
@@ -209,7 +209,7 @@ The helpers are real CLI tools, not just plumbing for the widget — which is ho
 debug a connection that misbehaves. They live in the installed plugin directory:
 
 ```bash
-cd ~/.config/omarchy/plugins/cahva.rdp-manager
+cd ~/.config/omarchy/plugins/io.github.cahva.rdp-manager
 
 bin/omarchy-rdp-launch my-server              # connect
 bin/omarchy-rdp-launch my-server --dry-run    # print the FreeRDP args, password redacted
@@ -221,10 +221,10 @@ bin/omarchy-rdp-disconnect my-server          # close a session
 There is also an IPC surface:
 
 ```bash
-omarchy-shell cahva.rdp-manager list
-omarchy-shell cahva.rdp-manager status
-omarchy-shell cahva.rdp-manager connect my-server
-omarchy-shell cahva.rdp-manager disconnect my-server
+omarchy-shell io.github.cahva.rdp-manager list
+omarchy-shell io.github.cahva.rdp-manager status
+omarchy-shell io.github.cahva.rdp-manager connect my-server
+omarchy-shell io.github.cahva.rdp-manager disconnect my-server
 ```
 
 ## Hyprland window rules
@@ -279,7 +279,7 @@ git clone https://github.com/cahva/omarchy-rdp-manager.git
 cd omarchy-rdp-manager
 
 ./dev-install.sh                 # rsync into ~/.config/omarchy/plugins/ + reload
-omarchy plugin enable cahva.rdp-manager right
+omarchy plugin enable io.github.cahva.rdp-manager right
 
 node tests/model.test.js         # pure logic
 node tests/manifest.test.js      # manifest + repo hygiene

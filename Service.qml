@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 
-// The engine for cahva.rdp-manager, loaded exactly once per shell session
+// The engine for io.github.cahva.rdp-manager, loaded exactly once per shell session
 // (manifest kind: "service").
 //
 // Everything there can only be one of lives here: the connection list, the
@@ -11,7 +11,7 @@ import "Model.js" as Model
 // Panel.qml is built once *per monitor*, so anything stateful placed there gets
 // duplicated on a multi-monitor setup — two poll timers, two writers racing the
 // same file. Panels reach this singleton through
-// `bar.shell.serviceFor("cahva.rdp-manager")`.
+// `bar.shell.serviceFor("io.github.cahva.rdp-manager")`.
 Item {
   id: service
 
@@ -22,7 +22,7 @@ Item {
   property var barWidgetRegistry: null
   property var pluginRegistry: null
 
-  readonly property string pluginId: "cahva.rdp-manager"
+  readonly property string pluginId: "io.github.cahva.rdp-manager"
   readonly property string home: Quickshell.env("HOME")
 
   // The registry stamps __sourceDir onto the manifest at scan time. Fall back to
@@ -465,7 +465,7 @@ Item {
   // Registered here rather than in the panel: an IPC target routes to a single
   // handler, and the panel exists once per monitor.
   IpcHandler {
-    target: "cahva.rdp-manager"
+    target: "io.github.cahva.rdp-manager"
 
     function connect(id: string): string {
       if (!service.connectionFor(id)) return "unknown connection: " + id

@@ -11,7 +11,7 @@
 # each change here.
 set -euo pipefail
 
-PLUGIN_ID=cahva.rdp-manager
+PLUGIN_ID=io.github.cahva.rdp-manager
 SRC=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 DEST="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$PLUGIN_ID"
 

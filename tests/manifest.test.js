@@ -123,6 +123,35 @@ test("every bin/ command is executable and has a shebang", function () {
   })
 })
 
+test("every hardcoded plugin id matches manifest.json", function () {
+  // The id appears in the QML, the dev installer and the docs, and renaming it
+  // means editing all of them together. A missed one is silent: the widget loads
+  // but the panel cannot find its service, or the installer writes to the wrong
+  // directory.
+  var id = manifest.id
+  var sites = [
+    ["Service.qml", /readonly property string pluginId: "([^"]+)"/],
+    ["Service.qml", /IpcHandler\s*\{[\s\S]*?target: "([^"]+)"/],
+    ["Panel.qml", /moduleName: "([^"]+)"/],
+    ["Panel.qml", /readonly property string manifestPluginId: "([^"]+)"/],
+    ["dev-install.sh", /PLUGIN_ID=(\S+)/]
+  ]
+  sites.forEach(function (site) {
+    var text = fs.readFileSync(path.join(root, site[0]), "utf8")
+    var match = text.match(site[1])
+    assert.ok(match, "could not find the plugin id in " + site[0] + " via " + site[1])
+    assert.strictEqual(match[1], id,
+      site[0] + " declares plugin id '" + match[1] + "' but manifest.json says '" + id + "'")
+  })
+})
+
+test("the plugin id is namespaced and lowercase", function () {
+  // Marketplace ids are permanent and unique across every repository, so a
+  // reverse-DNS namespace is what keeps this one from colliding.
+  assert.strictEqual(manifest.id, manifest.id.toLowerCase())
+  assert.ok(manifest.id.indexOf(".") !== -1, "expected a namespaced id")
+})
+
 test("no helper falls back to a world-writable state directory", function () {
   // omarchy-rdp-disconnect turns a file's contents into a SIGTERM, so a state
   // directory another local user can write to would let them pick the target.

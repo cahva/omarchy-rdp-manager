@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-First release.
+First release. The plugin id is `io.github.cahva.rdp-manager`.
 
 - Bar icon reflecting live session state: idle, connecting, connected (with a
   count), and a tinted icon when the last attempt failed.
