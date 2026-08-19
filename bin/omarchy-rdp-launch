@@ -53,7 +53,7 @@ for arg in "$@"; do
       exit 0
       ;;
     -*) die "unknown option: $arg" 64 ;;
-    *) [[ -z "$id" ]] && id=$arg || die "unexpected argument: $arg" 64 ;;
+    *) if [[ -z "$id" ]]; then id=$arg; else die "unexpected argument: $arg" 64; fi ;;
   esac
 done
 
@@ -159,7 +159,8 @@ fi
 
 # ------------------------------------------------------------------ state file
 
-mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR" 2>/dev/null || true
+mkdir -p "$STATE_DIR" || die "could not create $STATE_DIR"
+chmod 700 "$STATE_DIR" 2>/dev/null || true
 state_file="$STATE_DIR/$id.state"
 log_file="$STATE_DIR/$id.log"
 started_at=$(printf '%(%s)T' -1)
@@ -181,9 +182,12 @@ child=0
 # A TERM aimed at this script (that is how the panel's Disconnect works) has to
 # reach xfreerdp3 too, so the session actually closes. The trap body is
 # evaluated when the signal arrives, by which point $child is set.
+# shellcheck disable=SC2317  # reached via `trap`, which shellcheck cannot see
 on_term() {
   stopped=1
-  [[ $child -gt 0 ]] && kill -TERM "$child" 2>/dev/null
+  if [[ $child -gt 0 ]]; then
+    kill -TERM "$child" 2>/dev/null || true
+  fi
   return 0
 }
 trap on_term TERM INT
@@ -197,7 +201,8 @@ write_state connecting
 # be explained after the fact; stdout is not interesting.
 # FreeRDP does not log credentials, but the log is the one file this script
 # creates, so keep it owner-only regardless.
-: > "$log_file" && chmod 600 "$log_file" 2>/dev/null || true
+: > "$log_file"
+chmod 600 "$log_file" 2>/dev/null || true
 
 # Backgrounded rather than exec'd so the TERM trap above can forward the signal.
 "$XFREERDP" /args-from:fd:3 3< <(printf '%s\n' "${args[@]}") \

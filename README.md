@@ -22,12 +22,30 @@ This plugin keeps the convenience and drops the exposure.
 
 ## Install
 
+FreeRDP is not part of a stock Omarchy install, so install it first:
+
+```bash
+sudo pacman -S freerdp
+```
+
+Then add the plugin:
+
 ```bash
 omarchy plugin add https://github.com/cahva/omarchy-rdp-manager.git --enable --yes
 ```
 
-Requires `freerdp` (for `xfreerdp3`), `jq`, and a running `gnome-keyring` — all
-present on a stock Omarchy install.
+The other dependencies — `jq`, `gnome-keyring` and `libsecret` — are all in
+`omarchy-base.packages`, so they are already there.
+
+Check the pieces are in place:
+
+```bash
+xfreerdp3 --version
+# `search` answers 0 even when nothing matches, so a clean exit means the
+# keyring is reachable and unlocked. (Don't probe with `secret-tool --version`
+# or `--help` — neither is a supported flag and both exit 2.)
+secret-tool search --all service omarchy-rdp >/dev/null && echo "keyring ok"
+```
 
 To place or move the bar icon:
 

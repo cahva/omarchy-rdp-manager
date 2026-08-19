@@ -19,7 +19,19 @@ export OMARCHY_RDP_CONFIG_DIR="$TMP"
 pass=0
 fail=0
 ok()   { pass=$((pass+1)); }
-bad()  { fail=$((fail+1)); printf 'FAIL: %s\n' "$1" >&2; shift; [[ $# -gt 0 ]] && printf '%s\n' "$@" >&2; }
+bad()  {
+  fail=$((fail+1))
+  printf 'FAIL: %s\n' "$1" >&2
+  shift
+  if [[ $# -gt 0 ]]; then printf '%s\n' "$@" >&2; fi
+}
+# refute <description> <command...> -- passes when the command FAILS, which is
+# what every input-validation case here is asserting.
+refute() {
+  local desc=$1
+  shift
+  if "$@" >/dev/null 2>&1; then bad "$desc"; else ok; fi
+}
 
 cat > "$TMP/connections.json" <<'JSON'
 {
@@ -74,47 +86,50 @@ done
 
 # The regression that motivated this file.
 args=$(launcher_args negatives)
-grep -qx -- '-clipboard' <<<"$args" && ok || bad "clipboard:false must emit -clipboard" "$args"
-grep -qx -- '+clipboard' <<<"$args" && bad "clipboard:false must not emit +clipboard" "$args" || ok
-grep -qx -- '+dynamic-resolution' <<<"$args" && bad "dynamicResolution:false must not emit it" "$args" || ok
+if grep -qx -- '-clipboard' <<<"$args"; then ok; else bad "clipboard:false must emit -clipboard" "$args"; fi
+if grep -qx -- '+clipboard' <<<"$args"; then bad "clipboard:false must not emit +clipboard" "$args"; else ok; fi
+if grep -qx -- '+dynamic-resolution' <<<"$args"; then bad "dynamicResolution:false must not emit it" "$args"; else ok; fi
 
 # The invariant the whole password design rests on.
 count=$(grep -c '^/p:' <<<"$args")
-[[ "$count" == "1" ]] && ok || bad "expected exactly one /p: line, got $count"
-grep -qx -- '/p:<redacted>' <<<"$args" && ok || bad "the dry run must redact the password"
+if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got $count"; fi
+if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
 for id in baseline negatives multidrive noname; do
-  grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")" \
-    && ok || bad "missing /wm-class for '$id'"
+  if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
+    ok
+  else
+    bad "missing /wm-class for '$id'"
+  fi
 done
 
 # Port, domain and drive fan-out.
-grep -qx -- '/v:10.0.0.5' <<<"$(launcher_args baseline)" && ok || bad "default port must be omitted"
-grep -qx -- '/v:rdp.example.com:4489' <<<"$(launcher_args negatives)" && ok || bad "custom port must be included"
-grep -qx -- '/d:CORP' <<<"$(launcher_args negatives)" && ok || bad "domain must be passed"
-grep -q '^/d:' <<<"$(launcher_args baseline)" && bad "empty domain must not emit /d:" || ok
-[[ $(grep -c '^/drive:' <<<"$(launcher_args multidrive)") == "3" ]] && ok || bad "expected 3 /drive: lines"
+if grep -qx -- '/v:10.0.0.5' <<<"$(launcher_args baseline)"; then ok; else bad "default port must be omitted"; fi
+if grep -qx -- '/v:rdp.example.com:4489' <<<"$(launcher_args negatives)"; then ok; else bad "custom port must be included"; fi
+if grep -qx -- '/d:CORP' <<<"$(launcher_args negatives)"; then ok; else bad "domain must be passed"; fi
+if grep -q '^/d:' <<<"$(launcher_args baseline)"; then bad "empty domain must not emit /d:"; else ok; fi
+if [[ $(grep -c '^/drive:' <<<"$(launcher_args multidrive)") == "3" ]]; then ok; else bad "expected 3 /drive: lines"; fi
 
 # Input the launcher must refuse.
-bin/omarchy-rdp-launch 'x; rm -rf /' --dry-run >/dev/null 2>&1 && bad "accepted a shell-metacharacter id" || ok
-bin/omarchy-rdp-launch '../escape' --dry-run >/dev/null 2>&1 && bad "accepted a path-traversal id" || ok
-bin/omarchy-rdp-launch nosuchconnection --dry-run >/dev/null 2>&1 && bad "accepted an unknown id" || ok
-bin/omarchy-rdp-launch --dry-run >/dev/null 2>&1 && bad "accepted a missing id" || ok
+refute "accepted a shell-metacharacter id" bin/omarchy-rdp-launch 'x; rm -rf /' --dry-run
+refute "accepted a path-traversal id"       bin/omarchy-rdp-launch '../escape' --dry-run
+refute "accepted an unknown id"             bin/omarchy-rdp-launch nosuchconnection --dry-run
+refute "accepted a missing id"              bin/omarchy-rdp-launch --dry-run
 
 # The secret helper must refuse the same shapes.
-bin/omarchy-rdp-secret lookup 'Bad Id' >/dev/null 2>&1 && bad "secret helper accepted an invalid id" || ok
-bin/omarchy-rdp-secret bogus-action someid >/dev/null 2>&1 && bad "secret helper accepted an unknown action" || ok
+refute "secret helper accepted an invalid id"     bin/omarchy-rdp-secret lookup 'Bad Id'
+refute "secret helper accepted an unknown action" bin/omarchy-rdp-secret bogus-action someid
 
 # The status helper must survive an empty and a corrupt state directory.
 export OMARCHY_RDP_STATE_DIR="$TMP/state"
 out=$(bin/omarchy-rdp-status)
-[[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]] && ok || bad "missing state dir should yield no sessions: $out"
+if [[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]]; then ok; else bad "missing state dir should yield no sessions: $out"; fi
 mkdir -p "$OMARCHY_RDP_STATE_DIR"
 echo 'not json' > "$OMARCHY_RDP_STATE_DIR/broken.state"
 out=$(bin/omarchy-rdp-status)
-jq -e . >/dev/null 2>&1 <<<"$out" && ok || bad "a corrupt state file broke the status output: $out"
-[[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]] && ok || bad "corrupt state should be skipped: $out"
+if jq -e . >/dev/null 2>&1 <<<"$out"; then ok; else bad "a corrupt state file broke the status output: $out"; fi
+if [[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]]; then ok; else bad "corrupt state should be skipped: $out"; fi
 
 printf 'launcher.test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
