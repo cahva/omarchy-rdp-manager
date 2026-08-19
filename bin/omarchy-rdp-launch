@@ -24,7 +24,9 @@ SECRET_HELPER="$SELF_DIR/omarchy-rdp-secret"
 
 CONFIG_DIR=${OMARCHY_RDP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-rdp}
 CONFIG_FILE="$CONFIG_DIR/connections.json"
-STATE_DIR=${OMARCHY_RDP_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/omarchy-rdp}
+
+# shellcheck source=bin/lib-state-dir.sh
+. "$SELF_DIR/lib-state-dir.sh"
 
 GLYPH_OK=$'\U000F08B9'
 GLYPH_FAIL=$'\U000F0159'
@@ -159,8 +161,9 @@ fi
 
 # ------------------------------------------------------------------ state file
 
-mkdir -p "$STATE_DIR" || die "could not create $STATE_DIR"
-chmod 700 "$STATE_DIR" 2>/dev/null || true
+STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
+mkdir -p -m 700 "$STATE_DIR" || die "could not create $STATE_DIR"
+rdp_state_dir_ok "$STATE_DIR" || die "refusing to use state directory $STATE_DIR"
 state_file="$STATE_DIR/$id.state"
 log_file="$STATE_DIR/$id.log"
 started_at=$(printf '%(%s)T' -1)

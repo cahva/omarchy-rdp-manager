@@ -18,12 +18,19 @@ set -uo pipefail
 JQ=/usr/bin/jq
 HYPRCTL=/usr/bin/hyprctl
 
-STATE_DIR=${OMARCHY_RDP_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/omarchy-rdp}
+SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=bin/lib-state-dir.sh
+. "$SELF_DIR/lib-state-dir.sh"
 
 emit_empty() { printf '{"sessions":[],"error":%s}\n' "$("$JQ" -Rn --arg e "${1-}" '$e')"; }
 
 [[ -x "$JQ" ]] || { printf '{"sessions":[],"error":"jq not found"}\n'; exit 0; }
-[[ -d "$STATE_DIR" ]] || { emit_empty ""; exit 0; }
+
+STATE_DIR=$(rdp_state_dir 2>/dev/null) || { emit_empty "no usable state directory"; exit 0; }
+# No directory yet is the ordinary "nothing has ever run" case. A directory that
+# exists but is not ours is reported rather than read.
+[[ -e "$STATE_DIR" ]] || { emit_empty ""; exit 0; }
+rdp_state_dir_ok "$STATE_DIR" 2>/dev/null || { emit_empty "state directory is not owned by this user or is not mode 700"; exit 0; }
 
 shopt -s nullglob
 states=("$STATE_DIR"/*.state)

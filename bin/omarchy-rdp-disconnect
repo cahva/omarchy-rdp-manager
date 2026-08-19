@@ -9,9 +9,16 @@
 set -uo pipefail
 
 JQ=/usr/bin/jq
-STATE_DIR=${OMARCHY_RDP_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/omarchy-rdp}
+SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=bin/lib-state-dir.sh
+. "$SELF_DIR/lib-state-dir.sh"
 
 die() { printf 'omarchy-rdp-disconnect: %s\n' "$1" >&2; exit "${2:-1}"; }
+
+# This script turns a file's contents into a signal, so the directory it reads
+# from has to be proven ours before anything in it is believed.
+STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
+rdp_state_dir_ok "$STATE_DIR" || die "refusing to read state directory $STATE_DIR"
 
 id=${1:-}
 [[ -n "$id" ]] || die "usage: omarchy-rdp-disconnect <connection-id>" 64

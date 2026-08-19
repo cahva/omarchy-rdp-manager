@@ -53,6 +53,30 @@ To place or move the bar icon:
 omarchy bar move cahva.rdp-manager --after omarchy.clock
 ```
 
+## Remove
+
+```bash
+omarchy plugin remove cahva.rdp-manager
+```
+
+That takes the bar widget out of `shell.json` and deletes the plugin directory. It
+deliberately leaves your data alone, so reinstalling picks up where you left off.
+To remove that too:
+
+```bash
+# saved connections (contains no passwords)
+rm -rf ~/.config/omarchy-rdp
+
+# every password this plugin stored, in one call
+secret-tool clear service omarchy-rdp
+```
+
+Two things the plugin does not own and does not clean up:
+
+- `~/.config/freerdp/server/*.pem` — FreeRDP's own trust-on-first-use records,
+  shared with any other FreeRDP client you run.
+- `$XDG_RUNTIME_DIR/omarchy-rdp/` — per-session state, gone at your next reboot.
+
 ## How passwords are handled
 
 The password never appears in `ps`, in the environment, or on disk in plaintext.
@@ -223,6 +247,11 @@ Sessions are started detached (`setsid`), so `omarchy-restart-shell` — and the
 hot-reload that fires whenever a plugin file is saved — will not take your RDP
 session down with it. State is tracked in `$XDG_RUNTIME_DIR/omarchy-rdp/`, which is
 how a freshly started shell re-attaches to a session already running.
+
+That directory must be owned by you and mode `0700`, and the helpers refuse it
+otherwise — including if it is a symlink. `omarchy-rdp-disconnect` turns a pid read
+out of a file there into a `SIGTERM`, so a directory anyone else can write to would
+let them choose the target. There is deliberately no `/tmp` fallback.
 
 ## Troubleshooting
 

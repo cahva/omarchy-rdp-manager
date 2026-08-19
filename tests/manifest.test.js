@@ -105,13 +105,32 @@ test("the plugin directory contains no symlinks", function () {
   walk(root)
 })
 
-test("every bin/ helper is executable and has a shebang", function () {
+test("every bin/ command is executable and has a shebang", function () {
   fs.readdirSync(path.join(root, "bin")).forEach(function (name) {
     var full = path.join(root, "bin", name)
-    // The launcher is spawned directly by Quickshell, not through a shell, so a
+    // lib-*.sh files are sourced, never executed.
+    if (/^lib-/.test(name)) {
+      assert.ok((fs.statSync(full).mode & 0o111) === 0,
+        name + " is sourced, so it should not be executable")
+      assert.notStrictEqual(fs.readFileSync(full, "utf8").slice(0, 2), "#!",
+        name + " is sourced, so it should not carry a shebang")
+      return
+    }
+    // Commands are spawned directly by Quickshell, not through a shell, so a
     // missing +x bit means the process never starts and never reports an exit code.
     assert.ok((fs.statSync(full).mode & 0o111) !== 0, name + " is not executable")
     assert.strictEqual(fs.readFileSync(full, "utf8").slice(0, 2), "#!", name + " has no shebang")
+  })
+})
+
+test("no helper falls back to a world-writable state directory", function () {
+  // omarchy-rdp-disconnect turns a file's contents into a SIGTERM, so a state
+  // directory another local user can write to would let them pick the target.
+  // /tmp was the original fallback; it must not come back.
+  fs.readdirSync(path.join(root, "bin")).forEach(function (name) {
+    var text = fs.readFileSync(path.join(root, "bin", name), "utf8")
+    assert.ok(text.indexOf("XDG_RUNTIME_DIR:-/tmp") === -1,
+      name + " falls back to /tmp for state")
   })
 })
 

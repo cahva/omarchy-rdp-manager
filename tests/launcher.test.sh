@@ -125,11 +125,61 @@ refute "secret helper accepted an unknown action" bin/omarchy-rdp-secret bogus-a
 export OMARCHY_RDP_STATE_DIR="$TMP/state"
 out=$(bin/omarchy-rdp-status)
 if [[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]]; then ok; else bad "missing state dir should yield no sessions: $out"; fi
-mkdir -p "$OMARCHY_RDP_STATE_DIR"
+mkdir -p -m 700 "$OMARCHY_RDP_STATE_DIR"
 echo 'not json' > "$OMARCHY_RDP_STATE_DIR/broken.state"
 out=$(bin/omarchy-rdp-status)
 if jq -e . >/dev/null 2>&1 <<<"$out"; then ok; else bad "a corrupt state file broke the status output: $out"; fi
 if [[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]]; then ok; else bad "corrupt state should be skipped: $out"; fi
+
+# --- state directory must be ours and private ------------------------------
+#
+# omarchy-rdp-disconnect reads a pid from a state file and SIGTERMs it, so a
+# state directory that is world-writable, group-writable, or a symlink lets
+# someone else choose the target. Each case below fails against the original
+# code, which took ${XDG_RUNTIME_DIR:-/tmp}/omarchy-rdp on trust.
+
+hostile="$TMP/hostile"
+mkdir -p "$hostile"
+chmod 777 "$hostile"
+out=$(OMARCHY_RDP_STATE_DIR="$hostile" bin/omarchy-rdp-status 2>/dev/null)
+if [[ "$(jq -r '.error' <<<"$out")" == *"mode 700"* ]]; then ok; else bad "status trusted a world-writable state dir: $out"; fi
+if [[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]]; then ok; else bad "status read sessions from a world-writable dir"; fi
+
+# A planted state file must not be turned into a signal. The pid used is a real
+# process this test owns and can watch, so the assertion is that the victim is
+# still alive afterwards — not merely that the command exited non-zero, which it
+# would do anyway for a pid we cannot signal.
+plant_and_check() {
+  local dir=$1 desc=$2 victim
+  sleep 300 &
+  victim=$!
+  jq -n --argjson pid "$victim" \
+    '{id:"planted",pid:$pid,phase:"connected",wmClass:"omarchy-rdp-planted",host:"h",startedAt:0,exitCode:null,message:""}' \
+    > "$dir/planted.state" 2>/dev/null
+  OMARCHY_RDP_STATE_DIR="$dir" bin/omarchy-rdp-disconnect planted >/dev/null 2>&1
+  sleep 0.3
+  if kill -0 "$victim" 2>/dev/null; then ok; else bad "$desc"; fi
+  kill "$victim" 2>/dev/null
+  wait "$victim" 2>/dev/null
+}
+
+plant_and_check "$hostile" "disconnect signalled a pid from a world-writable state dir"
+
+groupwritable="$TMP/groupwritable"
+mkdir -p "$groupwritable"
+chmod 770 "$groupwritable"
+plant_and_check "$groupwritable" "disconnect signalled a pid from a group-writable state dir"
+
+private="$TMP/private"
+mkdir -p "$private"
+chmod 700 "$private"
+linked="$TMP/linked"
+ln -sfn "$private" "$linked"
+plant_and_check "$linked" "disconnect followed a symlinked state dir and signalled a pid"
+
+# The good case still works: a private directory of our own is accepted.
+out=$(OMARCHY_RDP_STATE_DIR="$private" bin/omarchy-rdp-status 2>/dev/null)
+if [[ "$(jq -r '.error' <<<"$out")" == "" ]]; then ok; else bad "a private state dir was rejected: $out"; fi
 
 printf 'launcher.test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

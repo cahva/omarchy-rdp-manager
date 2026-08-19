@@ -17,3 +17,7 @@ First release.
 - Sessions started detached, surviving shell restarts and plugin hot-reloads.
 - Standalone CLI helpers under `bin/` for connecting, probing, status and disconnect.
 - `+auth-only` test probe, run only on explicit request.
+- Session state directory must be owned by the current user and mode `0700`, and is
+  never `/tmp`. `omarchy-rdp-disconnect` reads a pid from a file there and signals
+  it, so a directory another local user could write to would let them pick the
+  target.
