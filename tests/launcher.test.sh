@@ -137,6 +137,54 @@ out=$(bin/omarchy-rdp-status)
 if jq -e . >/dev/null 2>&1 <<<"$out"; then ok; else bad "a corrupt state file broke the status output: $out"; fi
 if [[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]]; then ok; else bad "corrupt state should be skipped: $out"; fi
 
+# --- the secret helper must never report success for a failed write ---------
+#
+# Regression for #1: `$?` was captured inside `if ! cmd; then`, which yields the
+# status of the negation (always 0 when cmd failed) rather than of secret-tool.
+# That 0 was passed to `die`, so the helper exited 0 and the panel marked the
+# password as stored while the keyring held nothing or the previous credential.
+#
+# secret-tool's path is hardcoded on purpose — an env-overridable binary path in a
+# credential helper is not worth the testability — so these cases build a fixture
+# from the real script with the path and timeouts substituted.
+
+secret_fixture() {
+  local tool=$1 out="$TMP/secret-fixture"
+  sed -e "s|^SECRET_TOOL=.*|SECRET_TOOL=$tool|" \
+      -e "s|^STORE_TIMEOUT=.*|STORE_TIMEOUT=1|" \
+      -e "s|^LOOKUP_TIMEOUT=.*|LOOKUP_TIMEOUT=1|" \
+      bin/omarchy-rdp-secret > "$out"
+  chmod +x "$out"
+  printf '%s' "$out"
+}
+
+expect_exit() {
+  local want=$1 desc=$2
+  shift 2
+  "$@" >/dev/null 2>&1
+  local got=$?
+  if [[ "$got" == "$want" ]]; then ok; else bad "$desc (expected exit $want, got $got)"; fi
+}
+
+printf '#!/bin/sh\nexit 3\n' > "$TMP/failing-keyring"; chmod +x "$TMP/failing-keyring"
+printf '#!/bin/sh\nsleep 30\n' > "$TMP/hanging-keyring"; chmod +x "$TMP/hanging-keyring"
+
+failing=$(secret_fixture "$TMP/failing-keyring")
+# A non-zero secret-tool must surface as non-zero, and specifically not as 0.
+expect_exit 3 "store reported success for a failing keyring write" \
+  env - PATH="$PATH" "$failing" store demo-conn
+expect_exit 1 "lookup misreported a failing keyring read" \
+  env - PATH="$PATH" "$failing" lookup demo-conn
+
+hanging=$(secret_fixture "$TMP/hanging-keyring")
+# A write killed by `timeout` must surface as 124 so the panel can say the keyring
+# did not respond, rather than claiming the password was saved.
+expect_exit 124 "store reported success for a timed-out keyring write" \
+  env - PATH="$PATH" "$hanging" store demo-conn
+# And a timed-out read must not masquerade as "no password stored".
+expect_exit 124 "lookup reported a locked keyring as 'not stored'" \
+  env - PATH="$PATH" "$hanging" lookup demo-conn
+
 # --- state directory must be ours and private ------------------------------
 #
 # omarchy-rdp-disconnect reads a pid from a state file and SIGTERMs it, so a

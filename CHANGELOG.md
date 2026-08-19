@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.1
+
+### Fixed
+
+- `bin/omarchy-rdp-secret` reported success when a keyring write failed
+  ([#1](https://github.com/cahva/omarchy-rdp-manager/issues/1)). `$?` was captured
+  inside `if ! …; then`, which yields the status of the negation — always `0` when the
+  command failed — and that `0` was passed to `die`, so the helper exited 0. The panel
+  branches on the exit status, so it marked the connection as having a stored password
+  and closed the form while the keyring held nothing, or the previous credential.
+  Connecting then failed with "no password stored", or silently used the old password.
+- The same mistake in the `lookup` branch made its `124` timeout case unreachable, so a
+  locked keyring was reported as "no password stored yet" instead of saying the keyring
+  did not respond.
+- `die` now refuses to exit 0, so an error path cannot report success even if a status
+  is miscomputed again.
+
+Reaching either bug required the keyring to be locked or otherwise failing, which is why
+normal use never showed it.
+
 ## 0.1.0
 
 First release. The plugin id is `io.github.cahva.rdp-manager`.
