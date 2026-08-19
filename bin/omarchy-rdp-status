@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Report the state of every RDP session this plugin started, as one JSON line.
+#
+#   {"sessions":[{"id":"...","pid":123,"phase":"connected","startedAt":0,
+#                 "exitCode":null,"message":""}],"error":""}
+#
+# Phases:
+#   connecting  the launcher is alive but FreeRDP has not mapped a window yet
+#   connected   the launcher is alive and its window exists
+#   stopped     ended on purpose (disconnect, or a clean logoff)
+#   exited      ended on its own; exitCode/message say why
+#
+# A window only appears once the RDP connection actually succeeds — FreeRDP maps
+# nothing on a pre-connect or auth failure — which makes window presence a much
+# better "really connected" signal than the process being alive.
+set -uo pipefail
+
+JQ=/usr/bin/jq
+HYPRCTL=/usr/bin/hyprctl
+
+STATE_DIR=${OMARCHY_RDP_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/omarchy-rdp}
+
+emit_empty() { printf '{"sessions":[],"error":%s}\n' "$("$JQ" -Rn --arg e "${1-}" '$e')"; }
+
+[[ -x "$JQ" ]] || { printf '{"sessions":[],"error":"jq not found"}\n'; exit 0; }
+[[ -d "$STATE_DIR" ]] || { emit_empty ""; exit 0; }
+
+shopt -s nullglob
+states=("$STATE_DIR"/*.state)
+(( ${#states[@]} )) || { emit_empty ""; exit 0; }
+
+# One hyprctl call for the whole sweep rather than one per session. `initialClass`
+# is the class at map time, which is what /wm-class sets, so it stays correct even
+# if something later changes the class. Sessions are XWayland windows.
+classes=""
+if [[ -x "$HYPRCTL" ]]; then
+  classes=$("$HYPRCTL" clients -j 2>/dev/null \
+    | "$JQ" -r '.[] | .initialClass, .class' 2>/dev/null | sort -u) || classes=""
+fi
+
+has_window() {
+  [[ -n "$classes" ]] || return 1
+  printf '%s\n' "$classes" | grep -Fxq -- "$1"
+}
+
+out=()
+for state in "${states[@]}"; do
+  raw=$(cat "$state" 2>/dev/null) || continue
+  # A torn or hand-mangled file must not take the whole sweep down.
+  "$JQ" -e . >/dev/null 2>&1 <<<"$raw" || continue
+
+  id=$("$JQ" -r '.id // ""' <<<"$raw")
+  pid=$("$JQ" -r '.pid // 0' <<<"$raw")
+  phase=$("$JQ" -r '.phase // "exited"' <<<"$raw")
+  wm_class=$("$JQ" -r '.wmClass // ""' <<<"$raw")
+  [[ -n "$id" ]] || continue
+
+  if [[ "$phase" == "connecting" || "$phase" == "connected" ]]; then
+    if [[ "$pid" -gt 0 ]] && kill -0 "$pid" 2>/dev/null; then
+      # Alive. The window decides connecting vs connected.
+      if has_window "$wm_class"; then
+        raw=$("$JQ" '.phase = "connected"' <<<"$raw")
+      else
+        raw=$("$JQ" '.phase = "connecting"' <<<"$raw")
+      fi
+    else
+      # The launcher died without writing a terminal state — killed outright, or
+      # the machine went down mid-session. Nothing can say why, so don't invent
+      # a reason and don't paint it as a failure.
+      raw=$("$JQ" '.phase = "stopped" | .exitCode = 0 | .message = "Session ended"' <<<"$raw")
+      printf '%s\n' "$raw" > "$state.$$" && mv -f "$state.$$" "$state"
+    fi
+  fi
+
+  out+=("$raw")
+done
+
+if (( ${#out[@]} )); then
+  printf '%s\n' "${out[@]}" | "$JQ" -s '{sessions: ., error: ""}' -c
+else
+  emit_empty ""
+fi

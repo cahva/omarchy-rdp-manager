@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+# Launch a saved RDP connection.
+#
+# This is a working standalone CLI, not just a shim for the bar widget:
+#   omarchy-rdp-launch windows-build-server
+#   omarchy-rdp-launch windows-build-server --dry-run
+# Running it in a terminal is how you debug a connection that misbehaves.
+#
+# Password handling is the point of this script. FreeRDP warns that "passing
+# credentials or secrets via command line might expose these in the process
+# list", so nothing here ever puts the password in argv. Instead the whole
+# argument list — password included — goes to FreeRDP on file descriptor 3 via
+# /args-from:fd:3, leaving `ps` showing only `xfreerdp3 /args-from:fd:3`.
+# fd is preferred over /args-from:env: because an environment variable is still
+# readable through /proc/<pid>/environ.
+set -uo pipefail
+
+XFREERDP=/usr/bin/xfreerdp3
+JQ=/usr/bin/jq
+NOTIFY=/usr/bin/omarchy-notification-send
+
+SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+SECRET_HELPER="$SELF_DIR/omarchy-rdp-secret"
+
+CONFIG_DIR=${OMARCHY_RDP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-rdp}
+CONFIG_FILE="$CONFIG_DIR/connections.json"
+STATE_DIR=${OMARCHY_RDP_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/omarchy-rdp}
+
+GLYPH_OK=$'\U000F08B9'
+GLYPH_FAIL=$'\U000F0159'
+
+die() { printf 'omarchy-rdp-launch: %s\n' "$1" >&2; exit "${2:-1}"; }
+
+id=""
+dry_run=0
+test_only=0
+notify_on_end=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) dry_run=1 ;;
+    # Reachability + credential probe. `+auth-only` makes FreeRDP authenticate
+    # and stop before opening a window, so it answers "would this connect?"
+    # without starting a session. Prints nothing; the exit code is the answer.
+    --test) test_only=1 ;;
+    # The bar widget passes this through from its notifyOnDisconnect setting.
+    # Failures always notify; this adds a notification for a clean end too.
+    --notify) notify_on_end=1 ;;
+    -h|--help)
+      printf 'usage: omarchy-rdp-launch <connection-id> [--dry-run] [--notify]\n\n'
+      printf '  --dry-run  print the FreeRDP argument list (password redacted) and exit\n'
+      printf '  --test     authenticate only, then exit with FreeRDP status; opens no window\n'
+      printf '  --notify   also send a desktop notification when the session ends cleanly\n'
+      exit 0
+      ;;
+    -*) die "unknown option: $arg" 64 ;;
+    *) [[ -z "$id" ]] && id=$arg || die "unexpected argument: $arg" 64 ;;
+  esac
+done
+
+[[ -n "$id" ]] || die "usage: omarchy-rdp-launch <connection-id> [--dry-run]" 64
+[[ "$id" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "invalid connection id: $id" 64
+[[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
+[[ -x "$JQ" ]] || die "jq not found at $JQ"
+[[ -r "$CONFIG_FILE" ]] || die "no config at $CONFIG_FILE"
+
+# ------------------------------------------------------------------ the config
+
+conn=$("$JQ" -e --arg id "$id" '.connections[] | select(.id == $id)' "$CONFIG_FILE" 2>/dev/null) \
+  || die "no connection with id '$id' in $CONFIG_FILE"
+
+field() { printf '%s' "$conn" | "$JQ" -r --arg d "${2-}" '.'"$1"' // $d'; }
+
+host=$(field host)
+name=$(field name)
+port=$(field port 3389)
+user=$(field user)
+domain=$(field domain)
+cert=$(field options.cert tofu)
+
+[[ -n "$host" ]] || die "connection '$id' has no host"
+[[ -n "$user" ]] || die "connection '$id' has no user"
+case "$cert" in tofu|ignore|deny) ;; *) cert=tofu ;; esac
+
+# ------------------------------------------------------- the argument list
+
+# Mirrors Model.js buildArgs(). If you change the order or content here, change
+# it there too — tests/model.test.js asserts the shape, and the panel's dry-run
+# preview renders the Model.js version.
+args=()
+if [[ "$port" == "3389" || -z "$port" ]]; then
+  args+=("/v:$host")
+else
+  args+=("/v:$host:$port")
+fi
+args+=("/u:$user")
+[[ -n "$domain" ]] && args+=("/d:$domain")
+args+=("/cert:$cert")
+
+# Careful with jq's `//`: it substitutes for false as well as null, so
+# `.options.clipboard // true` would turn an explicit false back into true and
+# silently ignore the user switching clipboard off. Test for false directly.
+bool_field() {
+  # prints "false" only for an explicit false; anything else (including a
+  # missing key) prints "true", matching Model.js normalizeOptions().
+  printf '%s' "$conn" | "$JQ" -r 'if .'"$1"' == false then "false" else "true" end'
+}
+if [[ $(bool_field options.clipboard) == "false" ]]; then
+  args+=("-clipboard")
+else
+  args+=("+clipboard")
+fi
+if [[ $(bool_field options.dynamicResolution) != "false" ]]; then
+  args+=("+dynamic-resolution")
+fi
+
+# One /drive: per mapping — verified additive in FreeRDP 3.
+while IFS=$'\t' read -r dname dpath; do
+  [[ -n "$dname" && -n "$dpath" ]] || continue
+  args+=("/drive:$dname,$dpath")
+done < <(printf '%s' "$conn" | "$JQ" -r '(.drives // [])[] | [.name, .path] | @tsv')
+
+wm_class="omarchy-rdp-$id"
+args+=("/wm-class:$wm_class")
+# jq's // only substitutes for null/false, so an empty name survives it.
+# Fall back to the id, which is what Model.js parseConfig() backfills.
+args+=("/t:${name:-$id}")
+
+if (( dry_run )); then
+  printf '%s\n' "${args[@]}" '/p:<redacted>'
+  printf '\n# %s /args-from:fd:3   (%d arguments, none of them on the command line)\n' \
+    "$XFREERDP" "$(( ${#args[@]} + 1 ))"
+  exit 0
+fi
+
+# --------------------------------------------------------------- the password
+
+# From here on `password` is the only copy. It goes into the fd-3 list and
+# nowhere else: not argv, not the environment, not a temp file, not the log.
+if ! password=$("$SECRET_HELPER" lookup "$id"); then
+  die "no password stored for '$id' — save one in the RDP panel, or run:
+  $SECRET_HELPER store $id"
+fi
+args+=("/p:$password")
+unset password
+
+# --------------------------------------------------------------------- test
+
+if (( test_only )); then
+  # Quiet: a probe should say nothing and mean it through its exit code.
+  args+=("+auth-only" "/log-level:OFF")
+  "$XFREERDP" /args-from:fd:3 3< <(printf '%s\n' "${args[@]}") >/dev/null 2>&1
+  exit $?
+fi
+
+# ------------------------------------------------------------------ state file
+
+mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR" 2>/dev/null || true
+state_file="$STATE_DIR/$id.state"
+log_file="$STATE_DIR/$id.log"
+started_at=$(printf '%(%s)T' -1)
+
+write_state() {
+  local phase=$1 exit_code=${2:-null} message=${3:-}
+  local tmp="$state_file.$$"
+  "$JQ" -n \
+    --arg id "$id" --arg phase "$phase" --arg wmClass "$wm_class" \
+    --arg host "$host" --arg message "$message" \
+    --argjson pid "$$" --argjson startedAt "$started_at" --argjson exitCode "$exit_code" \
+    '{id: $id, pid: $pid, phase: $phase, wmClass: $wmClass, host: $host,
+      startedAt: $startedAt, exitCode: $exitCode, message: $message}' > "$tmp" \
+    && mv -f "$tmp" "$state_file"
+}
+
+stopped=0
+child=0
+# A TERM aimed at this script (that is how the panel's Disconnect works) has to
+# reach xfreerdp3 too, so the session actually closes. The trap body is
+# evaluated when the signal arrives, by which point $child is set.
+on_term() {
+  stopped=1
+  [[ $child -gt 0 ]] && kill -TERM "$child" 2>/dev/null
+  return 0
+}
+trap on_term TERM INT
+
+write_state connecting
+
+# ------------------------------------------------------------------- run it
+
+# `xfreerdp3` stays in the foreground for the whole session, so this script is
+# the session's lifetime and $! is not needed. stderr is kept so a failure can
+# be explained after the fact; stdout is not interesting.
+# FreeRDP does not log credentials, but the log is the one file this script
+# creates, so keep it owner-only regardless.
+: > "$log_file" && chmod 600 "$log_file" 2>/dev/null || true
+
+# Backgrounded rather than exec'd so the TERM trap above can forward the signal.
+"$XFREERDP" /args-from:fd:3 3< <(printf '%s\n' "${args[@]}") \
+  >/dev/null 2>>"$log_file" &
+child=$!
+unset args
+
+# `wait` returns early when a trapped signal arrives, with the child still
+# running; the second wait collects its real exit status.
+wait "$child"
+status=$?
+if (( status > 128 )) && kill -0 "$child" 2>/dev/null; then
+  wait "$child"
+  status=$?
+fi
+
+if (( stopped )) || [[ $status -eq 143 || $status -eq 130 ]]; then
+  write_state stopped 0 "Disconnected"
+  if (( notify_on_end )) && [[ -x "$NOTIFY" ]]; then
+    "$NOTIFY" -g "$GLYPH_OK" "RDP: ${name:-$id}" "Disconnected" || true
+  fi
+  exit 0
+fi
+
+if [[ $status -eq 0 ]]; then
+  write_state exited 0 "Session ended"
+  if (( notify_on_end )) && [[ -x "$NOTIFY" ]]; then
+    "$NOTIFY" -g "$GLYPH_OK" "RDP: ${name:-$id}" "Session ended" || true
+  fi
+  exit 0
+fi
+
+# Turn the exit code into something a human can act on. The table mirrors
+# Model.js describeExit(); FreeRDP encodes connection errors as
+# 135 + low byte of ERRCONNECT_* (see /usr/include/freerdp3/freerdp/error.h).
+case $status in
+  23)  message="Bad option value (plugin bug — please report)" ;;
+  24)  message="Unknown option (plugin bug — please report)" ;;
+  136) message="Pre-connect failed" ;;
+  139) message="DNS error" ;;
+  140) message="Host not found" ;;
+  141) message="Could not connect — host unreachable or RDP not listening" ;;
+  143) message="TLS handshake failed" ;;
+  144) message="Authentication failed" ;;
+  145) message="Insufficient privileges" ;;
+  146) message="Connection cancelled" ;;
+  147) message="Transport failed — is that port really RDP?" ;;
+  149) message="Password expired" ;;
+  155) message="Logon failure — check username and domain" ;;
+  156) message="Wrong password" ;;
+  157) message="Access denied" ;;
+  159) message="Account locked out" ;;
+  *)   if (( status >= 128 )); then message="Connection failed (FreeRDP exit $status)"
+       else message="Could not start FreeRDP (exit $status)"; fi ;;
+esac
+
+write_state exited "$status" "$message"
+
+if [[ -x "$NOTIFY" ]]; then
+  "$NOTIFY" -g "$GLYPH_FAIL" -u critical "RDP: ${name:-$id}" "$message" || true
+fi
+
+printf 'omarchy-rdp-launch: %s\n' "$message" >&2
+printf 'FreeRDP output is in %s\n' "$log_file" >&2
+exit "$status"

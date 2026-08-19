@@ -1,0 +1,7 @@
+node_modules/
+*.log
+.DS_Store
+
+# Local list of personal/client terms that must never reach this public repo.
+# Read by tests/manifest.test.js; never committed.
+.private-denylist

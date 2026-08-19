@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install runtime dependencies the shell helpers use
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck
+
+      - name: Unit tests
+        run: node tests/model.test.js
+
+      - name: Manifest and repo hygiene
+        run: node tests/manifest.test.js
+
+      - name: Launcher / Model.js argv parity
+        run: tests/launcher.test.sh
+
+      - name: shellcheck
+        run: shellcheck bin/omarchy-rdp-* dev-install.sh tests/launcher.test.sh
+
+      - name: manifest.json is valid JSON
+        run: jq -e . manifest.json > /dev/null

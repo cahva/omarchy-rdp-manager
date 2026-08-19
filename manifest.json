@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "cahva.rdp-manager",
+  "name": "RDP Manager",
+  "version": "0.1.0",
+  "author": "cahva",
+  "license": "MIT",
+  "description": "Saved RDP connections in the Omarchy bar. Connect with one click, watch live session state, and keep passwords in the system keyring instead of the process list.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "RDP",
+    "description": "Saved RDP connections and live session state",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "notifyOnDisconnect": true,
+      "hideWhenIdle": false
+    },
+    "schema": [
+      {
+        "key": "notifyOnDisconnect",
+        "type": "boolean",
+        "label": "Notify when a session ends",
+        "description": "Send a desktop notification when an RDP session disconnects, including the reason when it ended unexpectedly.",
+        "defaultValue": true
+      },
+      {
+        "key": "hideWhenIdle",
+        "type": "boolean",
+        "label": "Hide the icon when idle",
+        "description": "Keep the bar icon out of the way unless a session is connecting or connected. The panel stays reachable over IPC.",
+        "defaultValue": false
+      }
+    ]
+  }
+}

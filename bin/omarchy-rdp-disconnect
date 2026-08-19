@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Close a running RDP session.
+#
+#   omarchy-rdp-disconnect <connection-id>
+#
+# Sends SIGTERM to the launcher recorded in the state file. The launcher forwards
+# it to xfreerdp3 and writes the terminal state itself, so the status helper sees
+# a deliberate stop rather than having to guess from an exit code.
+set -uo pipefail
+
+JQ=/usr/bin/jq
+STATE_DIR=${OMARCHY_RDP_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/omarchy-rdp}
+
+die() { printf 'omarchy-rdp-disconnect: %s\n' "$1" >&2; exit "${2:-1}"; }
+
+id=${1:-}
+[[ -n "$id" ]] || die "usage: omarchy-rdp-disconnect <connection-id>" 64
+[[ "$id" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "invalid connection id: $id" 64
+
+state="$STATE_DIR/$id.state"
+[[ -r "$state" ]] || die "no session state for '$id'"
+
+pid=$("$JQ" -r '.pid // 0' "$state" 2>/dev/null) || die "unreadable state file for '$id'"
+[[ "$pid" -gt 0 ]] || die "no pid recorded for '$id'"
+
+kill -0 "$pid" 2>/dev/null || die "session for '$id' is not running (pid $pid)"
+kill -TERM "$pid" 2>/dev/null || die "could not signal pid $pid"
