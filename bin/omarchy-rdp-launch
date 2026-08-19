@@ -162,7 +162,10 @@ fi
 # ------------------------------------------------------------------ state file
 
 STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
-mkdir -p -m 700 "$STATE_DIR" || die "could not create $STATE_DIR"
+# `mkdir -p -m` would set the mode on the deepest directory only, so chmod
+# separately; rdp_state_dir_ok then confirms the result rather than assuming it.
+mkdir -p "$STATE_DIR" || die "could not create $STATE_DIR"
+chmod 700 "$STATE_DIR" || die "could not restrict $STATE_DIR to this user"
 rdp_state_dir_ok "$STATE_DIR" || die "refusing to use state directory $STATE_DIR"
 state_file="$STATE_DIR/$id.state"
 log_file="$STATE_DIR/$id.log"

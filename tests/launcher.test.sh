@@ -125,7 +125,7 @@ refute "secret helper accepted an unknown action" bin/omarchy-rdp-secret bogus-a
 export OMARCHY_RDP_STATE_DIR="$TMP/state"
 out=$(bin/omarchy-rdp-status)
 if [[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]]; then ok; else bad "missing state dir should yield no sessions: $out"; fi
-mkdir -p -m 700 "$OMARCHY_RDP_STATE_DIR"
+mkdir -p "$OMARCHY_RDP_STATE_DIR" && chmod 700 "$OMARCHY_RDP_STATE_DIR"
 echo 'not json' > "$OMARCHY_RDP_STATE_DIR/broken.state"
 out=$(bin/omarchy-rdp-status)
 if jq -e . >/dev/null 2>&1 <<<"$out"; then ok; else bad "a corrupt state file broke the status output: $out"; fi

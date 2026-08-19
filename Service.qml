@@ -162,7 +162,9 @@ Item {
 
   Process {
     id: mkdirProc
-    command: ["mkdir", "-p", "-m", "700", service.configDir]
+    // `install -d -m 700` applies the mode to the directory it creates, unlike
+    // `mkdir -p -m`, which only sets it on the deepest one.
+    command: ["/usr/bin/install", "-d", "-m", "700", service.configDir]
     // FileView will not create the directory, and mkdir is asynchronous, so the
     // first read is deferred until this has actually finished rather than racing
     // it and reporting a spurious first-run miss.
@@ -273,7 +275,7 @@ Item {
     var conn = connectionFor(id)
     if (!conn) return
     if (isLive(id)) { focusSession(id); return }
-    var argv = ["setsid", "-f", service.launchScript, String(id)]
+    var argv = ["/usr/bin/setsid", "-f", service.launchScript, String(id)]
     if (!options || options.notify !== false) argv.push("--notify")
     Quickshell.execDetached(argv)
     markPending(String(id))
@@ -286,7 +288,7 @@ Item {
   }
 
   function focusSession(id) {
-    Quickshell.execDetached(["hyprctl", "dispatch", "focuswindow",
+    Quickshell.execDetached(["/usr/bin/hyprctl", "dispatch", "focuswindow",
                              "class:" + Model.wmClassFor(id)])
   }
 
