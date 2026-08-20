@@ -259,6 +259,11 @@ otherwise — including if it is a symlink. `omarchy-rdp-disconnect` turns a pid
 out of a file there into a `SIGTERM`, so a directory anyone else can write to would
 let them choose the target. There is deliberately no `/tmp` fallback.
 
+For the same reason a pid is not trusted on its own. Each session records the
+launcher's process start time next to its pid, and both must match before a session
+counts as live or is signalled, so a stale state file plus a recycled pid cannot make
+the plugin terminate something unrelated.
+
 ## Troubleshooting
 
 **"No password stored yet"** — open the connection's edit form and set one, or run

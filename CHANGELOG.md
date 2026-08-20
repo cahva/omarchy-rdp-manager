@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.2
+
+### Fixed
+
+- Disconnect could send `SIGTERM` to an unrelated process
+  ([#3](https://github.com/cahva/omarchy-rdp-manager/issues/3)). The pid in a session
+  state file was checked with `kill -0` and nothing else, which proves only that *some*
+  process holds that pid. A launcher that died without writing a terminal state left the
+  pid behind, and once the kernel recycled it, Disconnect signalled whatever now owned it.
+- The status helper had the mirror problem: it reaped a stale state file only when
+  `kill -0` failed, so a recycled pid kept a phantom session in the panel indefinitely,
+  reported as "connecting" because no matching window exists.
+- Sessions now record the launcher's process start time (field 22 of `/proc/<pid>/stat`,
+  boot-relative and monotonic) alongside the pid, and both must match before a session
+  counts as live or is signalled.
+
+A state file written by 0.1.1 or earlier has no recorded start time and cannot be
+verified, so it is treated as not ours: a session running across the upgrade is reported
+as ended and must be closed from its own window. Session state lives in
+`$XDG_RUNTIME_DIR`, so this resolves itself at the next reboot.
+
 ## 0.1.1
 
 ### Fixed

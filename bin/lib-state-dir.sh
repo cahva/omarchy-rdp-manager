@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared state-directory resolution for the omarchy-rdp helpers.
 # Sourced, never executed — deliberately not marked executable.
 #

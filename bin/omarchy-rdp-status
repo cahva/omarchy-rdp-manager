@@ -21,6 +21,8 @@ HYPRCTL=/usr/bin/hyprctl
 SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck source=bin/lib-state-dir.sh
 . "$SELF_DIR/lib-state-dir.sh"
+# shellcheck source=bin/lib-process.sh
+. "$SELF_DIR/lib-process.sh"
 
 emit_empty() { printf '{"sessions":[],"error":%s}\n' "$("$JQ" -Rn --arg e "${1-}" '$e')"; }
 
@@ -62,8 +64,14 @@ for state in "${states[@]}"; do
   wm_class=$("$JQ" -r '.wmClass // ""' <<<"$raw")
   [[ -n "$id" ]] || continue
 
+  start_ticks=$("$JQ" -r '.startTicks // ""' <<<"$raw")
+
   if [[ "$phase" == "connecting" || "$phase" == "connected" ]]; then
-    if [[ "$pid" -gt 0 ]] && kill -0 "$pid" 2>/dev/null; then
+    # `kill -0` alone is not enough: pids get recycled, and a state file left by a
+    # launcher that died without writing a terminal state would otherwise keep
+    # reporting a live session forever, wired to whatever now holds the pid.
+    if [[ "$pid" -gt 0 ]] && kill -0 "$pid" 2>/dev/null \
+        && rdp_same_process "$pid" "$start_ticks"; then
       # Alive. The window decides connecting vs connected.
       if has_window "$wm_class"; then
         raw=$("$JQ" '.phase = "connected"' <<<"$raw")
@@ -71,9 +79,9 @@ for state in "${states[@]}"; do
         raw=$("$JQ" '.phase = "connecting"' <<<"$raw")
       fi
     else
-      # The launcher died without writing a terminal state — killed outright, or
-      # the machine went down mid-session. Nothing can say why, so don't invent
-      # a reason and don't paint it as a failure.
+      # The launcher is gone: killed outright, the machine went down mid-session,
+      # or the pid is alive but now belongs to something else. Nothing can say
+      # why, so don't invent a reason and don't paint it as a failure.
       raw=$("$JQ" '.phase = "stopped" | .exitCode = 0 | .message = "Session ended"' <<<"$raw")
       printf '%s\n' "$raw" > "$state.$$" && mv -f "$state.$$" "$state"
     fi

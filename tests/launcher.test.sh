@@ -33,6 +33,26 @@ refute() {
   if "$@" >/dev/null 2>&1; then bad "$desc"; else ok; fi
 }
 
+# expect_exit <code> <description> <command...>
+expect_exit() {
+  local want=$1 desc=$2
+  shift 2
+  "$@" >/dev/null 2>&1
+  local got=$?
+  if [[ "$got" == "$want" ]]; then ok; else bad "$desc (expected exit $want, got $got)"; fi
+}
+
+# Every helper must exist before the cases run. Without `set -e` a helper that is
+# defined further down the file is just "command not found" on stderr: the
+# assertions using it never run, and the suite still reports a clean pass. That
+# happened while adding the #3 cases, so it is checked rather than assumed.
+for helper in ok bad refute expect_exit; do
+  if ! declare -F "$helper" >/dev/null; then
+    printf 'FATAL: helper %s is not defined before the test cases\n' "$helper" >&2
+    exit 1
+  fi
+done
+
 cat > "$TMP/connections.json" <<'JSON'
 {
   "version": 1,
@@ -137,6 +157,89 @@ out=$(bin/omarchy-rdp-status)
 if jq -e . >/dev/null 2>&1 <<<"$out"; then ok; else bad "a corrupt state file broke the status output: $out"; fi
 if [[ "$(jq -r '.sessions | length' <<<"$out")" == "0" ]]; then ok; else bad "corrupt state should be skipped: $out"; fi
 
+# --- a recycled pid must not be signalled ----------------------------------
+#
+# Regression for #3: disconnect checked the state file's pid with `kill -0` and
+# nothing else. That proves only that *a* process holds the pid, so a state file
+# left by a launcher that died without writing a terminal state, plus a recycled
+# pid, made Disconnect SIGTERM an unrelated process of the user's. The status
+# helper had the mirror problem: `kill -0` succeeding meant the phantom session
+# was never reaped and sat in the panel forever.
+
+stale="$TMP/stale"
+mkdir -p "$stale"
+chmod 700 "$stale"
+
+# Each case gets a fresh bystander. Sharing one let the first case kill it, after
+# which every later case passed vacuously against the buggy code.
+disconnect_must_not_signal() {
+  local ticks_mode=$1 desc=$2 victim ticks
+  sleep 300 &
+  victim=$!
+  sleep 0.2
+  case $ticks_mode in
+    # A start time that does not belong to this pid: what a recycled pid looks like.
+    mismatch) ticks="1" ;;
+    # A state file written before this check existed cannot be verified.
+    missing)  ticks="" ;;
+  esac
+  jq -n --argjson pid "$victim" --arg ticks "$ticks" \
+    '{id:"stalesession",pid:$pid,startTicks:$ticks,phase:"connected",
+      wmClass:"omarchy-rdp-stalesession",host:"10.0.0.5",startedAt:0,
+      exitCode:null,message:""}' > "$stale/stalesession.state"
+
+  OMARCHY_RDP_STATE_DIR="$stale" bin/omarchy-rdp-disconnect stalesession >/dev/null 2>&1
+  local code=$?
+  sleep 0.3
+  if kill -0 "$victim" 2>/dev/null; then ok; else bad "$desc"; fi
+  if [[ $code -ne 0 ]]; then ok; else bad "$desc (disconnect reported success)"; fi
+
+  # Status must reap it, not report a live session forever.
+  local phase
+  phase=$(OMARCHY_RDP_STATE_DIR="$stale" bin/omarchy-rdp-status 2>/dev/null \
+    | jq -r '.sessions[] | select(.id=="stalesession") | .phase')
+  if [[ "$phase" == "stopped" ]]; then ok; else bad "$desc (status reported '$phase')"; fi
+
+  kill "$victim" 2>/dev/null
+  wait "$victim" 2>/dev/null
+}
+
+disconnect_must_not_signal mismatch "an unrelated process was signalled via a recycled pid"
+disconnect_must_not_signal missing  "an unrelated process was signalled via an unverifiable state file"
+
+# The status helper's half of #3, tested without disconnect touching anything:
+# with the pid alive but its start time not matching, the old code kept reporting
+# a live session forever, because `kill -0` succeeded and the window check merely
+# downgraded it to "connecting".
+sleep 300 &
+phantom=$!
+sleep 0.2
+jq -n --argjson pid "$phantom" \
+  '{id:"phantom",pid:$pid,startTicks:"1",phase:"connected",
+    wmClass:"omarchy-rdp-phantom",host:"10.0.0.5",startedAt:0,
+    exitCode:null,message:""}' > "$stale/phantom.state"
+phantom_phase=$(OMARCHY_RDP_STATE_DIR="$stale" bin/omarchy-rdp-status 2>/dev/null \
+  | jq -r '.sessions[] | select(.id=="phantom") | .phase')
+if [[ "$phantom_phase" == "stopped" ]]; then ok; else bad "status reported a recycled pid as '$phantom_phase' instead of reaping it"; fi
+kill "$phantom" 2>/dev/null
+wait "$phantom" 2>/dev/null
+rm -f "$stale/phantom.state"
+
+# The honest case must still work: the real pid with its real start time.
+sleep 300 &
+genuine=$!
+sleep 0.2
+genuine_ticks=$(awk '{ sub(/^.*\) /, ""); print $20 }' "/proc/$genuine/stat")
+jq -n --argjson pid "$genuine" --arg ticks "$genuine_ticks" \
+  '{id:"stalesession",pid:$pid,startTicks:$ticks,phase:"connected",
+    wmClass:"omarchy-rdp-stalesession",host:"10.0.0.5",startedAt:0,
+    exitCode:null,message:""}' > "$stale/stalesession.state"
+OMARCHY_RDP_STATE_DIR="$stale" bin/omarchy-rdp-disconnect stalesession >/dev/null 2>&1
+sleep 0.4
+if kill -0 "$genuine" 2>/dev/null; then bad "a verified pid was not signalled"; else ok; fi
+kill "$genuine" 2>/dev/null
+wait "$genuine" 2>/dev/null
+
 # --- the secret helper must never report success for a failed write ---------
 #
 # Regression for #1: `$?` was captured inside `if ! cmd; then`, which yields the
@@ -156,14 +259,6 @@ secret_fixture() {
       bin/omarchy-rdp-secret > "$out"
   chmod +x "$out"
   printf '%s' "$out"
-}
-
-expect_exit() {
-  local want=$1 desc=$2
-  shift 2
-  "$@" >/dev/null 2>&1
-  local got=$?
-  if [[ "$got" == "$want" ]]; then ok; else bad "$desc (expected exit $want, got $got)"; fi
 }
 
 printf '#!/bin/sh\nexit 3\n' > "$TMP/failing-keyring"; chmod +x "$TMP/failing-keyring"
