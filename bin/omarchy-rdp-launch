@@ -27,6 +27,8 @@ CONFIG_FILE="$CONFIG_DIR/connections.json"
 
 # shellcheck source=bin/lib-state-dir.sh
 . "$SELF_DIR/lib-state-dir.sh"
+# shellcheck source=bin/lib-process.sh
+. "$SELF_DIR/lib-process.sh"
 
 GLYPH_OK=$'\U000F08B9'
 GLYPH_FAIL=$'\U000F0159'
@@ -171,15 +173,20 @@ state_file="$STATE_DIR/$id.state"
 log_file="$STATE_DIR/$id.log"
 started_at=$(printf '%(%s)T' -1)
 
+# Recorded so readers can tell this process from a later one that inherits its
+# pid. Without it `kill -0` is the only check available, and that cannot
+# distinguish our launcher from whatever recycled the number.
+start_ticks=$(rdp_start_ticks $$) || die "cannot read /proc/$$/stat to identify this process"
+
 write_state() {
   local phase=$1 exit_code=${2:-null} message=${3:-}
   local tmp="$state_file.$$"
   "$JQ" -n \
     --arg id "$id" --arg phase "$phase" --arg wmClass "$wm_class" \
-    --arg host "$host" --arg message "$message" \
+    --arg host "$host" --arg message "$message" --arg startTicks "$start_ticks" \
     --argjson pid "$$" --argjson startedAt "$started_at" --argjson exitCode "$exit_code" \
-    '{id: $id, pid: $pid, phase: $phase, wmClass: $wmClass, host: $host,
-      startedAt: $startedAt, exitCode: $exitCode, message: $message}' > "$tmp" \
+    '{id: $id, pid: $pid, startTicks: $startTicks, phase: $phase, wmClass: $wmClass,
+      host: $host, startedAt: $startedAt, exitCode: $exitCode, message: $message}' > "$tmp" \
     && mv -f "$tmp" "$state_file"
 }
 

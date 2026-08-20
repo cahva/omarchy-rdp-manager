@@ -32,7 +32,7 @@ jobs:
       # variable and single quotes are exactly right. Warnings and errors still
       # fail the build.
       - name: shellcheck
-        run: shellcheck --severity=warning bin/omarchy-rdp-* dev-install.sh tests/launcher.test.sh
+        run: shellcheck --severity=warning bin/omarchy-rdp-* bin/lib-*.sh dev-install.sh tests/launcher.test.sh
 
       - name: manifest.json is valid JSON
         run: jq -e . manifest.json > /dev/null
