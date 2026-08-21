@@ -6,13 +6,26 @@ on:
   pull_request:
   workflow_call:
 
+# Read-only by default. release.yml calls this workflow, so the repository's own
+# test code must never be able to inherit a write-capable token.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to full commit SHAs. A moving tag like @v4 lets the
+      # action's code change under us, which matters most in a workflow that
+      # runs alongside a write-capable job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '20'
 
