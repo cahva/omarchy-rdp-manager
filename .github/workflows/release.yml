@@ -4,42 +4,119 @@ on:
   push:
     tags: ['v*']
 
+# No workflow-level write. Each job takes only what it needs, so the repository's
+# own test suite can never inherit a token that could push to the repo.
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  # Repository-controlled code runs here, read-only.
   test:
     uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
 
-  release:
-    needs: test
+  # Deterministic checks on the ref itself. Nothing from the repository is
+  # executed in this job: jq and awk only read tracked files as data.
+  guard:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.manifest.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A release ref must be an annotated tag carrying a signature GitHub can
+      # verify against a key registered to the account. A lightweight tag, an
+      # unsigned tag, or a signature from an unknown key is refused.
+      - name: The tag must be signed and verified
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          object_type=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.type')
+          object_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')
+          if [ "$object_type" != "tag" ]; then
+            echo "$GITHUB_REF_NAME is a lightweight tag; a release tag must be annotated and signed" >&2
+            exit 1
+          fi
+          verified=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object_sha" --jq '.verification.verified')
+          reason=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object_sha" --jq '.verification.reason')
+          if [ "$verified" != "true" ]; then
+            echo "tag $GITHUB_REF_NAME is not a verified signed tag (reason: $reason)" >&2
+            exit 1
+          fi
+          commit=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object_sha" --jq '.object.sha')
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "$GITHUB_REF_NAME is a verified signed tag at $commit"
+
+      # Releases are cut from main only. Without this, a tag pushed at any
+      # unreviewed commit would publish as a release.
+      - name: The tagged commit must be contained in main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ steps.tag.outputs.commit }}
+        run: |
+          set -euo pipefail
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$COMMIT" --jq '.status')
+          case "$status" in
+            identical|behind)
+              echo "$COMMIT is contained in main (compare status: $status)" ;;
+            *)
+              echo "$COMMIT is not contained in main (compare status: $status)" >&2
+              exit 1 ;;
+          esac
 
       - name: The tag must match manifest.json
+        id: manifest
         run: |
+          set -euo pipefail
           tag="${GITHUB_REF_NAME#v}"
           manifest=$(jq -r .version manifest.json)
           if [ "$tag" != "$manifest" ]; then
             echo "tag $GITHUB_REF_NAME says $tag, manifest.json says $manifest" >&2
             exit 1
           fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  # The only write-capable job. It runs no repository code: awk reads
+  # CHANGELOG.md as data, and gh publishes the notes.
+  release:
+    needs: [test, guard]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Pull the release notes out of CHANGELOG.md
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          awk -v v="$version" '$0 == "## " v {f=1; next} f && /^## / {exit} f' \
-            CHANGELOG.md > notes.md
-          if [ ! -s notes.md ]; then
-            echo "CHANGELOG.md has no '## $version' section" >&2
+          set -euo pipefail
+          awk -v v="$VERSION" '$0 == "## " v {f=1; next} f && /^## / {exit} f' \
+            CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "CHANGELOG.md has no '## $VERSION' section" >&2
             exit 1
           fi
-          cat notes.md
+          cat "$RUNNER_TEMP/notes.md"
 
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" --notes-file notes.md
+            --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
