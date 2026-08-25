@@ -146,7 +146,8 @@ contains a password** — only a `"secret": "keyring"` marker.
         { "name": "home", "path": "/home/you/projects/shared" }
       ],
       "options": {
-        "dynamicResolution": true,
+        "displayMode": "fixed",
+        "resolution": "auto",
         "clipboard": true,
         "cert": "tofu"
       }
@@ -163,6 +164,27 @@ Edits are picked up live — no reload needed. Notes:
 - `port` and `domain` are honoured by the launcher but have no form field yet.
 - `cert` is `tofu` (trust on first use), `ignore`, or `deny`. TOFU state is
   FreeRDP's own, in `~/.config/freerdp/server/`.
+- `resolution` is `auto` or `WIDTHxHEIGHT`. `auto` matches the monitor the
+  session opens on, clamped to 2560x1440 so a large or ultrawide display does
+  not become a framebuffer that is slow to push over a WAN. Each axis is
+  clamped on its own: a 5120x1440 ultrawide asks for 2560x1440, not 2560x720.
+- `displayMode` decides what resizing the window does:
+
+  | Mode | FreeRDP flag | Resizing the window | Server involvement |
+  |---|---|---|---|
+  | `fixed` | none | letterboxes | none |
+  | `scaled` | `/smart-sizing` | scales the desktop | none |
+  | `dynamic` | `+dynamic-resolution` | renegotiates the desktop size | display driver |
+
+  `fixed` is sharpest and `dynamic` follows the window most faithfully, but
+  `dynamic` puts every resize through the server's indirect display driver,
+  which on Windows is `RdpIdd.dll`. If that crashes it takes the session with
+  it, so `scaled` is the resizable option that keeps the server out of it.
+  FreeRDP refuses `/smart-sizing` and `+dynamic-resolution` together, exiting
+  22, which is why this is one setting rather than two switches.
+- `displayMode` replaced an older `dynamicResolution` boolean. Files that still
+  have the boolean keep working: `true` reads as `dynamic`, `false` as `fixed`,
+  and absent as `dynamic`, which is what the old default did.
 
 Widget preferences live on the widget's entry in `~/.config/omarchy/shell.json`:
 
@@ -230,13 +252,31 @@ omarchy-shell io.github.cahva.rdp-manager disconnect my-server
 
 ## Hyprland window rules
 
-Every session gets the window class `omarchy-rdp-<id>`, so you can rule on it:
+Every session gets the window class `omarchy-rdp-<id>`, so one rule covers every
+saved connection. Omarchy 4 configures Hyprland in Lua:
 
+```lua
+-- ~/.config/hypr/hyprland.lua
+o.window("^omarchy-rdp-.*", { center = true })
+o.window("^omarchy-rdp-.*", { workspace = "9" })
 ```
-# ~/.config/hypr/hyprland.conf
-windowrulev2 = workspace 9,        class:^(omarchy-rdp-.*)$
-windowrulev2 = idleinhibit always, class:^(omarchy-rdp-.*)$
-```
+
+Note the trailing `.*`. Hyprland matches the pattern against the **whole** class,
+so `"^omarchy-rdp-"` silently matches nothing: it is a prefix, and the class is
+longer than it. A rule that does not match produces no error, it just never fires.
+
+Resist adding `float = true`. FreeRDP already decides it, and better than a rule
+can: a `fixed` or `scaled` desktop cannot be resized, so the window arrives with
+fixed size hints and Hyprland floats it, while a `dynamic` desktop is resizable
+and tiles, letting the remote resolution follow the tile. Forcing `float` takes
+that away and leaves every dynamic session in a floating window it did not need.
+`center` is the right half to keep: it tidies the floating case and is ignored
+for a tiled window.
+
+Without any rule a floating session opens wherever the compositor puts it, which
+on a large monitor tends to be the top-left corner. Do not add a `size` rule
+either: the plugin already asks FreeRDP for a resolution, and a size rule fights
+it.
 
 That class is also how the plugin distinguishes *connecting* from *connected*:
 FreeRDP maps no window until the connection actually succeeds, so window presence is
@@ -249,9 +289,8 @@ pre-0.56 dispatcher.
 
 ## Sessions outlive the shell
 
-Sessions are started detached (`setsid`), so `omarchy-restart-shell` — and the
-hot-reload that fires whenever a plugin file is saved — will not take your RDP
-session down with it. State is tracked in `$XDG_RUNTIME_DIR/omarchy-rdp/`, which is
+Sessions are started detached (`setsid`), so restarting or reloading the shell will
+not take your RDP session down with it. State is tracked in `$XDG_RUNTIME_DIR/omarchy-rdp/`, which is
 how a freshly started shell re-attaches to a session already running.
 
 That directory must be owned by you and mode `0700`, and the helpers refuse it
@@ -291,11 +330,22 @@ cd omarchy-rdp-manager
 
 ./dev-install.sh                 # rsync into ~/.config/omarchy/plugins/ + reload
 omarchy plugin enable io.github.cahva.rdp-manager right
+omarchy restart shell            # required after any .qml change, see below
 
 node tests/model.test.js         # pure logic
 node tests/manifest.test.js      # manifest + repo hygiene
 tests/launcher.test.sh           # launcher/Model.js argv parity
 ```
+
+Omarchy launches Quickshell with `QS_DISABLE_FILE_WATCHER=1`, so QML is **not**
+hot-reloaded. Saving a file under `~/.config/omarchy/plugins/` makes Omarchy
+re-register the plugin, and `omarchy-shell shell rescanPlugins` forces that, but
+neither rebuilds a QML component: Qt caches compiled types by URL for the life of
+the process, so even disabling and re-enabling the plugin re-instantiates the old
+one. Only `omarchy restart shell` picks up a `.qml` edit.
+
+`bin/` and `Model.js` are different. The launcher is a script executed afresh on
+every connect, so a change there is live as soon as `dev-install.sh` has run.
 
 `Model.js` holds every pure function and is shared by `Service.qml`, `Panel.qml` and
 the tests. `Service.qml` is loaded **once per shell session** and owns all state, the

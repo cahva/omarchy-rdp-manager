@@ -87,7 +87,11 @@ Panel {
   property string formUser: ""
   property string formPassword: ""
   property string formCert: "tofu"
-  property bool formDynamicResolution: true
+  // "auto", one of Model.COMMON_RESOLUTIONS, or "custom". The literal size a
+  // custom choice stands for lives in formResolutionCustom.
+  property string formDisplayMode: "fixed"
+  property string formResolution: "auto"
+  property string formResolutionCustom: ""
   property bool formClipboard: true
   property var formErrors: ({})
   property string formNotice: ""
@@ -163,6 +167,38 @@ Panel {
 
   // ------------------------------------------------------------------- forms
 
+  // The dropdown offers auto, a few common sizes and "custom". A saved value
+  // that is neither auto nor on the list has to land in the custom field, or
+  // opening a hand-edited connection would silently reset its resolution to
+  // whatever the dropdown happened to show.
+  function loadResolution(resolution) {
+    var value = String(resolution || "auto")
+    if (value === "auto" || Model.COMMON_RESOLUTIONS.indexOf(value) !== -1) {
+      root.formResolution = value
+      root.formResolutionCustom = ""
+    } else {
+      root.formResolution = "custom"
+      root.formResolutionCustom = value
+    }
+  }
+
+  function currentResolution() {
+    return root.formResolution === "custom" ? root.formResolutionCustom : root.formResolution
+  }
+
+  // Built once: the list is static, and a binding whose body is a statement
+  // block reads ambiguously in QML.
+  function buildResolutionOptions() {
+    var out = [{ value: "auto", label: "auto: match this screen, capped at 2560x1440" }]
+    for (var i = 0; i < Model.COMMON_RESOLUTIONS.length; i++) {
+      out.push({ value: Model.COMMON_RESOLUTIONS[i], label: Model.COMMON_RESOLUTIONS[i] })
+    }
+    out.push({ value: "custom", label: "custom size..." })
+    return out
+  }
+
+  readonly property var resolutionOptions: root.buildResolutionOptions()
+
   function openForm(conn) {
     root.formErrors = ({})
     root.formNotice = ""
@@ -174,7 +210,8 @@ Panel {
       root.formHost = conn.host
       root.formUser = conn.user
       root.formCert = conn.options.cert
-      root.formDynamicResolution = conn.options.dynamicResolution
+      root.formDisplayMode = conn.options.displayMode
+      root.loadResolution(conn.options.resolution)
       root.formClipboard = conn.options.clipboard
       loadDrives(conn.drives)
       if (svc) svc.probeSecret(conn.id)
@@ -186,7 +223,8 @@ Panel {
       root.formHost = ""
       root.formUser = ""
       root.formCert = blank.options.cert
-      root.formDynamicResolution = blank.options.dynamicResolution
+      root.formDisplayMode = blank.options.displayMode
+      root.loadResolution(blank.options.resolution)
       root.formClipboard = blank.options.clipboard
       loadDrives([])
     }
@@ -235,7 +273,8 @@ Panel {
       secret: "keyring",
       drives: root.drivesFromModel(),
       options: {
-        dynamicResolution: root.formDynamicResolution,
+        displayMode: root.formDisplayMode,
+        resolution: root.currentResolution(),
         clipboard: root.formClipboard,
         cert: root.formCert
       }
@@ -689,12 +728,53 @@ Panel {
               fontFamily: root.fontFamily
             }
 
-            OptionToggle {
+            Dropdown {
               width: parent.width
-              label: "Dynamic resolution"
-              detail: "Resize the remote desktop with the window"
-              checked: root.formDynamicResolution
-              onToggledOption: root.formDynamicResolution = !root.formDynamicResolution
+              label: "Display mode"
+              value: root.formDisplayMode
+              fontFamily: root.fontFamily
+              // One choice rather than two toggles: FreeRDP exits 22 if
+              // /smart-sizing and +dynamic-resolution are both passed.
+              options: [
+                { value: "fixed", label: "fixed: one size, resizing letterboxes" },
+                { value: "scaled", label: "scaled: desktop scales to the window" },
+                { value: "dynamic", label: "dynamic: server resizes the desktop" }
+              ]
+              onChanged: function(v) { root.formDisplayMode = v }
+            }
+
+            // Under "dynamic" the desktop is renegotiated on the first resize,
+            // so this is only the size the window opens at. Calling it a
+            // resolution there would be a lie, but hiding it would take away
+            // the one thing that stops the window opening tiny.
+            Dropdown {
+              width: parent.width
+              label: root.formDisplayMode === "dynamic" ? "Starting size" : "Resolution"
+              value: root.formResolution
+              fontFamily: root.fontFamily
+              options: root.resolutionOptions
+              onChanged: function(v) { root.formResolution = v }
+            }
+
+            Text {
+              visible: root.formDisplayMode === "dynamic"
+              width: parent.width
+              text: "The desktop follows the window after that."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+
+            FormField {
+              visible: root.formResolution === "custom"
+              width: parent.width
+              label: "Custom resolution"
+              text: root.formResolutionCustom
+              placeholder: "1920x1080"
+              errorText: root.formErrors.resolution || ""
+              onEdited: function(t) { root.formResolutionCustom = t }
+              onSubmitted: root.saveForm()
             }
 
             OptionToggle {

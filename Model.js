@@ -79,6 +79,105 @@ function uniqueId(name, takenIds) {
 var DEFAULT_PORT = 3389
 var CERT_POLICIES = ["tofu", "ignore", "deny"]
 
+// ------------------------------------------------------- display and sizing
+
+// How the remote desktop relates to the client window.
+//   fixed    the desktop is created at one size and stays there. Growing the
+//            window letterboxes it. Sharpest, and the server does nothing.
+//   scaled   /smart-sizing scales the desktop to the window. Resizable, a
+//            little soft away from native size, still no server involvement.
+//   dynamic  +dynamic-resolution asks the server to resize the desktop to
+//            match the window. Best fidelity while resizing, but it drives the
+//            server's indirect display driver (RdpIdd.dll on Windows), which
+//            is the component that takes the session down when it crashes.
+// FreeRDP refuses /smart-sizing and +dynamic-resolution together (it exits 22),
+// so this is one choice rather than two independent flags.
+var DISPLAY_MODES = ["fixed", "scaled", "dynamic"]
+
+// Offered by the form's resolution dropdown, most common first.
+var COMMON_RESOLUTIONS = [
+  "1920x1080", "2560x1440", "1600x900", "1366x768", "1280x1024", "3840x2160"
+]
+
+// "auto" resolves against the monitor the session opens on. The cap stops a
+// large or very wide display from becoming a desktop that is slow to push over
+// a WAN: a 5120x1440 ultrawide asks for 2560x1440 rather than seven megapixels
+// of framebuffer per update.
+var AUTO_MAX_WIDTH = 2560
+var AUTO_MAX_HEIGHT = 1440
+var MIN_WIDTH = 640
+var MIN_HEIGHT = 480
+var MAX_WIDTH = 7680
+var MAX_HEIGHT = 4320
+
+// Used when "auto" is asked for but the caller could not supply a monitor
+// size. The launcher and the panel both pass a real one.
+var FALLBACK_AUTO = { width: 1920, height: 1080 }
+
+// Clamp a monitor size into something sensible to ask a remote desktop for.
+// Each axis is clamped independently: fitting an ultrawide inside the cap
+// while preserving its aspect ratio would give 2560x720, which is a letterbox
+// slot nobody wants to work in.
+function autoResolution(monitorWidth, monitorHeight) {
+  var w = Number(monitorWidth)
+  var h = Number(monitorHeight)
+  if (!isFinite(w) || w <= 0) w = FALLBACK_AUTO.width
+  if (!isFinite(h) || h <= 0) h = FALLBACK_AUTO.height
+  w = Math.min(Math.floor(w), AUTO_MAX_WIDTH)
+  h = Math.min(Math.floor(h), AUTO_MAX_HEIGHT)
+  // RDP wants a width that is a multiple of 4; an odd height is no better.
+  w = Math.max(Math.floor(w / 4) * 4, MIN_WIDTH)
+  h = Math.max(Math.floor(h / 2) * 2, MIN_HEIGHT)
+  return { width: w, height: h }
+}
+
+// Accepts "1920x1080", tolerating stray spaces or a pasted multiplication
+// sign. Returns null for anything else, "auto" included, so callers can tell
+// a real size from the keyword.
+function parseResolution(value) {
+  var m = /^\s*(\d{3,5})\s*[x\u00d7]\s*(\d{3,5})\s*$/.exec(str(value))
+  if (!m) return null
+  var w = Number(m[1])
+  var h = Number(m[2])
+  if (w < MIN_WIDTH || w > MAX_WIDTH || h < MIN_HEIGHT || h > MAX_HEIGHT) return null
+  return { width: w, height: h }
+}
+
+function normalizeResolution(value) {
+  var v = trim(value).toLowerCase()
+  if (!v || v === "auto") return "auto"
+  var parsed = parseResolution(v)
+  return parsed ? parsed.width + "x" + parsed.height : "auto"
+}
+
+// displayMode replaced an older dynamicResolution boolean. A file written
+// before this option existed still carries the boolean, so it is read as the
+// mode it used to mean; absent entirely keeps the old default, which was
+// dynamic resolution on.
+function normalizeDisplayMode(options) {
+  var o = options && typeof options === "object" ? options : {}
+  var mode = trim(o.displayMode).toLowerCase()
+  if (DISPLAY_MODES.indexOf(mode) !== -1) return mode
+  if (o.dynamicResolution === false) return "fixed"
+  return "dynamic"
+}
+
+// The size to actually ask FreeRDP for. `autoSize` is the monitor the session
+// will open on, passed in because this file cannot see a display: the launcher
+// reads it from hyprctl, the panel from its own screen.
+function resolveResolution(conn, autoSize) {
+  var c = normalizeConnection(conn)
+  // Honoured in every mode. Under "dynamic" the desktop is renegotiated on the
+  // first resize, so this only decides where the window opens, but that is
+  // exactly the size that matters most: without it FreeRDP starts at 1024x768.
+  if (c.options.resolution !== "auto") {
+    var explicit = parseResolution(c.options.resolution)
+    if (explicit) return explicit
+  }
+  var a = autoSize && typeof autoSize === "object" ? autoSize : FALLBACK_AUTO
+  return autoResolution(a.width, a.height)
+}
+
 function normalizeDrive(drive) {
   var d = drive && typeof drive === "object" ? drive : {}
   return { name: trim(d.name), path: trim(d.path) }
@@ -100,7 +199,8 @@ function normalizeOptions(options) {
   var o = options && typeof options === "object" ? options : {}
   var cert = trim(o.cert).toLowerCase()
   return {
-    dynamicResolution: o.dynamicResolution !== false,
+    displayMode: normalizeDisplayMode(o),
+    resolution: normalizeResolution(o.resolution),
     clipboard: o.clipboard !== false,
     cert: CERT_POLICIES.indexOf(cert) === -1 ? "tofu" : cert
   }
@@ -187,6 +287,14 @@ function validateConnection(conn, takenIds) {
   var rawPort = conn && conn.port !== undefined && conn.port !== null ? Number(conn.port) : DEFAULT_PORT
   if (!isFinite(rawPort) || rawPort < 1 || rawPort > 65535) errors.port = "Port must be between 1 and 65535"
 
+  // Only a typed or hand-edited value can be wrong here; the dropdown can only
+  // produce "auto" or a preset. normalizeResolution() would quietly fall back
+  // to "auto", which would hide the mistake instead of reporting it.
+  var rawRes = trim(conn && conn.options ? conn.options.resolution : "")
+  if (rawRes && rawRes.toLowerCase() !== "auto" && !parseResolution(rawRes)) {
+    errors.resolution = "Use WIDTHxHEIGHT, for example 1920x1080"
+  }
+
   var drives = asList(conn ? conn.drives : [])
   for (var i = 0; i < drives.length; i++) {
     var d = normalizeDrive(drives[i])
@@ -232,7 +340,7 @@ function wmClassFor(id) {
 // line by the launcher, which is the only place it exists, so nothing that
 // renders or logs this list can leak it. `buildArgs` is what the dry-run
 // preview shows, and the launcher builds the same list, so they cannot drift.
-function buildArgs(conn) {
+function buildArgs(conn, autoSize) {
   var c = normalizeConnection(conn)
   var args = []
 
@@ -245,7 +353,14 @@ function buildArgs(conn) {
   // negative one. Emitting +clipboard as well keeps the intent readable in a
   // dry run and matches what a user would type by hand.
   args.push(c.options.clipboard ? "+clipboard" : "-clipboard")
-  if (c.options.dynamicResolution) args.push("+dynamic-resolution")
+
+  // Without a size FreeRDP picks 1024x768, which is a postage stamp on a
+  // modern display. The size is emitted for every mode: under "dynamic" it is
+  // the size the desktop starts at before the first resize.
+  var size = resolveResolution(c, autoSize)
+  args.push("/size:" + size.width + "x" + size.height)
+  if (c.options.displayMode === "scaled") args.push("/smart-sizing")
+  else if (c.options.displayMode === "dynamic") args.push("+dynamic-resolution")
 
   for (var i = 0; i < c.drives.length; i++) {
     args.push("/drive:" + c.drives[i].name + "," + c.drives[i].path)
@@ -263,12 +378,12 @@ function buildArgs(conn) {
 
 // What the user sees in a dry run: the real list plus a redacted stand-in for
 // the line the launcher adds.
-function previewArgs(conn) {
-  return buildArgs(conn).concat(["/p:<redacted>"])
+function previewArgs(conn, autoSize) {
+  return buildArgs(conn, autoSize).concat(["/p:<redacted>"])
 }
 
-function previewCommand(conn) {
-  return "xfreerdp3 /args-from:fd:3   # " + previewArgs(conn).length + " arguments on fd 3"
+function previewCommand(conn, autoSize) {
+  return "xfreerdp3 /args-from:fd:3   # " + previewArgs(conn, autoSize).length + " arguments on fd 3"
 }
 
 // ---------------------------------------------------------------- exit codes
@@ -533,7 +648,7 @@ function blankConnection() {
     domain: "",
     secret: "keyring",
     drives: [],
-    options: { dynamicResolution: true, clipboard: true, cert: "tofu" }
+    options: { displayMode: "fixed", resolution: "auto", clipboard: true, cert: "tofu" }
   }
 }
 
@@ -546,5 +661,7 @@ if (typeof module !== "undefined") module.exports = {
   normalizeSession, parseStatus, sessionMap, isLive, summarize, pollInterval,
   formatDuration, endpointFor, driveSummary, rowStatus, tooltipFor, heroMeta,
   upsertConnection, removeConnection, findConnection, blankConnection,
-  DEFAULT_PORT, CERT_POLICIES
+  autoResolution, parseResolution, normalizeResolution, normalizeDisplayMode, resolveResolution,
+  DEFAULT_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS,
+  AUTO_MAX_WIDTH, AUTO_MAX_HEIGHT
 }

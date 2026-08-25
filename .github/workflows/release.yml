@@ -16,16 +16,20 @@ concurrency:
 jobs:
   # Repository-controlled code runs here, read-only.
   test:
+    name: Tests
     uses: ./.github/workflows/ci.yml
     permissions:
+      # Checkout only. This job runs the repository's own test code.
       contents: read
 
   # Deterministic checks on the ref itself. Nothing from the repository is
   # executed in this job: jq and awk only read tracked files as data.
   guard:
+    name: Release gates
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      # Reads the tag, its signature and the compare status. Never writes.
       contents: read
     outputs:
       version: ${{ steps.manifest.outputs.version }}
@@ -91,11 +95,14 @@ jobs:
   # The only write-capable job. It runs no repository code: awk reads
   # CHANGELOG.md as data, and gh publishes the notes.
   release:
+    name: Publish release
     needs: [test, guard]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
+      # Scoped to this job alone, so the test job that runs repository code
+      # above can never inherit it.
+      contents: write # creating a release is the one write this workflow needs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

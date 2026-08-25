@@ -11,8 +11,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Supersede a pull request's earlier runs, but never cancel a run a release
+  # is waiting on: release.yml calls this workflow and blocks on its result.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
+    name: Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -50,3 +57,27 @@ jobs:
 
       - name: manifest.json is valid JSON
         run: jq -e . manifest.json > /dev/null
+
+  # Static analysis of these workflows themselves. This covers the class of
+  # problem a marketplace reviewer caught by hand in #6: permissions granted
+  # too widely, actions referenced by a moving tag, template injection, and
+  # commits pinned to a SHA that does not belong to the action's repository.
+  workflows:
+    name: Workflow security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Read-only on purpose. `advanced-security: true` would upload SARIF to
+      # the Security tab, which needs security-events: write; annotations put
+      # the same findings inline on the pull request for nothing.
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          inputs: .github/workflows/
+          advanced-security: false
+          annotations: true
