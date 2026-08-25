@@ -378,5 +378,27 @@ plant_and_check "$linked" "disconnect followed a symlinked state dir and signall
 out=$(OMARCHY_RDP_STATE_DIR="$private" bin/omarchy-rdp-status 2>/dev/null)
 if [[ "$(jq -r '.error' <<<"$out")" == "" ]]; then ok; else bad "a private state dir was rejected: $out"; fi
 
+# The exit-code table is written twice: as EXIT_MESSAGES in Model.js and as the
+# case statement in the launcher. Every entry above 143 was wrong once already,
+# because both were derived from "135 + low byte of ERRCONNECT_*" and the real
+# enum has a gap at 146. Duplication that has already drifted gets a test.
+launcher_table=$(sed -nE 's/^  ([0-9]+)\)[[:space:]]+message="(.*)" ;;$/\1\t\2/p' bin/omarchy-rdp-launch)
+model_table=$(ROOT=$PWD node -e '
+  var M = require(process.env.ROOT + "/Model.js")
+  Object.keys(M.EXIT_MESSAGES).map(Number).sort(function (a, b) { return a - b })
+    .forEach(function (k) {
+      // 0 is handled before the case statement in the launcher, so it is not
+      // part of the table being compared.
+      if (k !== 0) console.log(k + "\t" + M.EXIT_MESSAGES[k])
+    })
+')
+if [[ -z "$launcher_table" ]]; then
+  bad "could not read the launcher exit table; has its formatting changed?"
+elif [[ "$launcher_table" == "$model_table" ]]; then
+  ok
+else
+  bad "the exit-code tables disagree" "$(diff <(printf '%s\n' "$launcher_table") <(printf '%s\n' "$model_table"))"
+fi
+
 printf 'launcher.test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

@@ -23,6 +23,8 @@ SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 . "$SELF_DIR/lib-state-dir.sh"
 # shellcheck source=bin/lib-process.sh
 . "$SELF_DIR/lib-process.sh"
+# shellcheck source=bin/lib-window.sh
+. "$SELF_DIR/lib-window.sh"
 
 emit_empty() { printf '{"sessions":[],"error":%s}\n' "$("$JQ" -Rn --arg e "${1-}" '$e')"; }
 
@@ -38,19 +40,10 @@ shopt -s nullglob
 states=("$STATE_DIR"/*.state)
 (( ${#states[@]} )) || { emit_empty ""; exit 0; }
 
-# One hyprctl call for the whole sweep rather than one per session. `initialClass`
-# is the class at map time, which is what /wm-class sets, so it stays correct even
-# if something later changes the class. Sessions are XWayland windows.
-classes=""
-if [[ -x "$HYPRCTL" ]]; then
-  classes=$("$HYPRCTL" clients -j 2>/dev/null \
-    | "$JQ" -r '.[] | .initialClass, .class' 2>/dev/null | sort -u) || classes=""
-fi
+# One hyprctl call for the whole sweep rather than one per session.
+classes=$(rdp_window_classes) || classes=""
 
-has_window() {
-  [[ -n "$classes" ]] || return 1
-  printf '%s\n' "$classes" | grep -Fxq -- "$1"
-}
+has_window() { rdp_class_present "$1" "$classes"; }
 
 out=()
 for state in "${states[@]}"; do

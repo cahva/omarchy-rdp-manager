@@ -278,7 +278,8 @@ on a large monitor tends to be the top-left corner. Do not add a `size` rule
 either: the plugin already asks FreeRDP for a resolution, and a size rule fights
 it.
 
-That class is also how the plugin distinguishes *connecting* from *connected*:
+That class is also how the plugin distinguishes *connecting* from *connected*, and
+how it tells a dropped session from one that never connected:
 FreeRDP maps no window until the connection actually succeeds, so window presence is
 a far better signal than the process merely being alive. Focusing a session switches
 to its workspace, so the class is all the plugin needs to find it again.
@@ -286,6 +287,20 @@ to its workspace, so the class is all the plugin needs to find it again.
 If you are on Hyprland older than 0.56, note that `hyprctl dispatch` gained a Lua
 interface in 0.56 and `bin/omarchy-rdp-focus` prefers it, falling back to the
 pre-0.56 dispatcher.
+
+### Why the window matters twice
+
+FreeRDP maps no window until the connection actually succeeds, so a window
+existing is a far better "really connected" signal than the process being alive.
+The launcher watches for its own window and records that it appeared, because
+the same exit code means different things either side of that moment. Exit 147
+at connect time means the socket opened but nothing there speaks RDP, which is
+worth asking about the port over. The same 147 an hour into a session just means
+the link died, and telling you to check the port would send you after something
+that was never wrong.
+
+Without `hyprctl` the watch simply never fires, and a dropped session falls back
+to the connect-time wording. Nothing else depends on it.
 
 ## Sessions outlive the shell
 
