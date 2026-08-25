@@ -87,9 +87,74 @@ test("uniqueId reads a sequence wrapper of taken ids", function () {
 
 test("normalizeOptions defaults on, and honours an explicit false", function () {
   assert.deepStrictEqual(M.normalizeOptions(undefined),
-    { dynamicResolution: true, clipboard: true, cert: "tofu" })
+    { displayMode: "dynamic", resolution: "auto", clipboard: true, cert: "tofu" })
   assert.deepStrictEqual(M.normalizeOptions({ clipboard: false, dynamicResolution: false, cert: "ignore" }),
-    { dynamicResolution: false, clipboard: false, cert: "ignore" })
+    { displayMode: "fixed", resolution: "auto", clipboard: false, cert: "ignore" })
+})
+
+// ------------------------------------------------------- display and sizing
+
+test("normalizeDisplayMode reads the legacy dynamicResolution boolean", function () {
+  // Files written before displayMode existed carry only the boolean. Absent
+  // entirely has to keep meaning what it used to mean, which was dynamic on,
+  // or upgrading would silently change how every saved connection behaves.
+  assert.strictEqual(M.normalizeDisplayMode({}), "dynamic")
+  assert.strictEqual(M.normalizeDisplayMode({ dynamicResolution: true }), "dynamic")
+  assert.strictEqual(M.normalizeDisplayMode({ dynamicResolution: false }), "fixed")
+  // An explicit mode wins over the legacy key.
+  assert.strictEqual(M.normalizeDisplayMode({ displayMode: "scaled", dynamicResolution: true }), "scaled")
+  assert.strictEqual(M.normalizeDisplayMode({ displayMode: "SCALED" }), "scaled")
+  assert.strictEqual(M.normalizeDisplayMode({ displayMode: "nonsense" }), "dynamic")
+})
+
+test("autoResolution clamps each axis independently", function () {
+  // Preserving the aspect ratio would turn a 5120x1440 ultrawide into
+  // 2560x720, a letterbox slot nobody wants to work in. Clamping per axis
+  // keeps the full height.
+  assert.deepStrictEqual(M.autoResolution(5120, 1440), { width: 2560, height: 1440 })
+  assert.deepStrictEqual(M.autoResolution(3840, 2160), { width: 2560, height: 1440 })
+  assert.deepStrictEqual(M.autoResolution(1920, 1080), { width: 1920, height: 1080 })
+})
+
+test("autoResolution rounds width to a multiple of 4", function () {
+  assert.deepStrictEqual(M.autoResolution(1366, 768), { width: 1364, height: 768 })
+})
+
+test("autoResolution falls back when the monitor size is unusable", function () {
+  assert.deepStrictEqual(M.autoResolution(0, 0), { width: 1920, height: 1080 })
+  assert.deepStrictEqual(M.autoResolution(NaN, undefined), { width: 1920, height: 1080 })
+})
+
+test("autoResolution never goes below the floor", function () {
+  assert.deepStrictEqual(M.autoResolution(320, 200), { width: 640, height: 480 })
+})
+
+test("parseResolution accepts WxH and rejects everything else", function () {
+  assert.deepStrictEqual(M.parseResolution("1920x1080"), { width: 1920, height: 1080 })
+  assert.deepStrictEqual(M.parseResolution("  2560 x 1440 "), { width: 2560, height: 1440 })
+  // A resolution pasted from a spec sheet often carries a multiplication sign.
+  assert.deepStrictEqual(M.parseResolution("1600\u00d7900"), { width: 1600, height: 900 })
+  assert.strictEqual(M.parseResolution("auto"), null)
+  assert.strictEqual(M.parseResolution("99x99"), null)
+  assert.strictEqual(M.parseResolution("99999x1080"), null)
+  assert.strictEqual(M.parseResolution(""), null)
+  assert.strictEqual(M.parseResolution("1920"), null)
+})
+
+test("normalizeResolution falls back to auto rather than passing junk on", function () {
+  assert.strictEqual(M.normalizeResolution(undefined), "auto")
+  assert.strictEqual(M.normalizeResolution("AUTO"), "auto")
+  assert.strictEqual(M.normalizeResolution("garbage"), "auto")
+  assert.strictEqual(M.normalizeResolution("1600 \u00d7 900"), "1600x900")
+})
+
+test("resolveResolution prefers an explicit size over the monitor", function () {
+  var explicit = { options: { resolution: "1280x1024" } }
+  assert.deepStrictEqual(M.resolveResolution(explicit, { width: 5120, height: 1440 }),
+    { width: 1280, height: 1024 })
+  var auto = { options: { resolution: "auto" } }
+  assert.deepStrictEqual(M.resolveResolution(auto, { width: 5120, height: 1440 }),
+    { width: 2560, height: 1440 })
 })
 
 test("normalizeOptions rejects an unknown cert policy", function () {
@@ -218,6 +283,8 @@ test("buildArgs reproduces the documented baseline command", function () {
     "/u:Administrator",
     "/cert:tofu",
     "+clipboard",
+    // No autoSize was passed, so "auto" lands on the documented fallback.
+    "/size:1920x1080",
     "+dynamic-resolution",
     "/drive:home,/home/you/projects/shared",
     "/wm-class:omarchy-rdp-windows-build-server",
@@ -233,6 +300,59 @@ test("buildArgs honours clipboard:false and dynamicResolution:false", function (
   assert.ok(args.indexOf("-clipboard") !== -1, "expected -clipboard in " + args.join(" "))
   assert.ok(args.indexOf("+clipboard") === -1)
   assert.ok(args.indexOf("+dynamic-resolution") === -1)
+})
+
+test("buildArgs emits exactly one of /smart-sizing and +dynamic-resolution", function () {
+  // FreeRDP exits 22 when both are present, so this is an invariant rather
+  // than a matter of taste.
+  var base = { id: "a", name: "A", host: "h", user: "u" }
+  function argsFor(mode) {
+    return M.buildArgs({ id: base.id, name: base.name, host: base.host, user: base.user,
+                         options: { displayMode: mode, resolution: "1920x1080" } })
+  }
+  var fixed = argsFor("fixed")
+  assert.ok(fixed.indexOf("/smart-sizing") === -1)
+  assert.ok(fixed.indexOf("+dynamic-resolution") === -1)
+
+  var scaled = argsFor("scaled")
+  assert.ok(scaled.indexOf("/smart-sizing") !== -1, "expected /smart-sizing in " + scaled.join(" "))
+  assert.ok(scaled.indexOf("+dynamic-resolution") === -1)
+
+  var dynamic = argsFor("dynamic")
+  assert.ok(dynamic.indexOf("+dynamic-resolution") !== -1)
+  assert.ok(dynamic.indexOf("/smart-sizing") === -1)
+})
+
+test("buildArgs always emits a size, so FreeRDP never falls back to 1024x768", function () {
+  ;["fixed", "scaled", "dynamic"].forEach(function (mode) {
+    var args = M.buildArgs({ id: "a", name: "A", host: "h", user: "u",
+                             options: { displayMode: mode } }, { width: 2560, height: 1440 })
+    var sizes = args.filter(function (a) { return a.indexOf("/size:") === 0 })
+    assert.deepStrictEqual(sizes, ["/size:2560x1440"], mode + " -> " + args.join(" "))
+  })
+})
+
+test("buildArgs uses the monitor passed in for an auto resolution", function () {
+  var conn = { id: "a", name: "A", host: "h", user: "u",
+               options: { displayMode: "fixed", resolution: "auto" } }
+  assert.ok(M.buildArgs(conn, { width: 5120, height: 1440 }).indexOf("/size:2560x1440") !== -1)
+  assert.ok(M.buildArgs(conn, { width: 1600, height: 900 }).indexOf("/size:1600x900") !== -1)
+})
+
+test("validateConnection rejects an unusable resolution", function () {
+  var base = { name: "A", host: "h", user: "u" }
+  function check(res) {
+    return M.validateConnection({ name: base.name, host: base.host, user: base.user,
+                                  options: { resolution: res } }, [])
+  }
+  assert.strictEqual(check("auto").ok, true)
+  assert.strictEqual(check("1920x1080").ok, true)
+  assert.strictEqual(check("").ok, true)
+  // normalizeResolution would quietly turn these into "auto", which hides the
+  // mistake from someone who hand-edited the file.
+  assert.strictEqual(check("garbage").ok, false)
+  assert.ok(check("garbage").errors.resolution)
+  assert.strictEqual(check("99x99").ok, false)
 })
 
 test("buildArgs omits the port when it is the default and includes it otherwise", function () {

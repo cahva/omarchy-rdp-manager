@@ -15,6 +15,10 @@ ROOT=$PWD
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 export OMARCHY_RDP_CONFIG_DIR="$TMP"
+# "auto" resolves against the focused monitor, so without pinning it the two
+# sides would ask a compositor that does not exist on a CI runner, and locally
+# the comparison would drift with whatever screen the developer is on.
+export OMARCHY_RDP_AUTO_SIZE=5120x1440
 
 pass=0
 fail=0
@@ -72,7 +76,22 @@ cat > "$TMP/connections.json" <<'JSON'
       "options": { "dynamicResolution": true, "clipboard": true, "cert": "deny" } },
     { "id": "noname", "name": "", "host": "10.0.0.7", "port": 3389,
       "user": "u", "domain": "",
-      "drives": [], "options": {} }
+      "drives": [], "options": {} },
+    { "id": "fixed-auto", "name": "Fixed auto", "host": "10.0.0.8", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "displayMode": "fixed", "resolution": "auto" } },
+    { "id": "scaled-explicit", "name": "Scaled explicit", "host": "10.0.0.9", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "displayMode": "scaled", "resolution": "1920x1080" } },
+    { "id": "dynamic-explicit", "name": "Dynamic explicit", "host": "10.0.0.10", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "displayMode": "dynamic", "resolution": "2560x1440" } },
+    { "id": "bad-resolution", "name": "Bad resolution", "host": "10.0.0.11", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "displayMode": "fixed", "resolution": "99x99" } },
+    { "id": "unicode-resolution", "name": "Unicode resolution", "host": "10.0.0.12", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "displayMode": "fixed", "resolution": "1600 \u00d7 900" } }
   ]
 }
 JSON
@@ -83,7 +102,8 @@ model_args() {
     var cfg = M.parseConfig(fs.readFileSync(process.env.OMARCHY_RDP_CONFIG_DIR + "/connections.json", "utf8"))
     var c = M.findConnection(cfg.connections, process.argv[1])
     if (!c) { console.error("no such connection"); process.exit(1) }
-    console.log(M.previewArgs(c).join("\n"))
+    var parts = String(process.env.OMARCHY_RDP_AUTO_SIZE || "").split("x")
+    console.log(M.previewArgs(c, { width: Number(parts[0]), height: Number(parts[1]) }).join("\n"))
   ' "$1"
 }
 
@@ -94,7 +114,7 @@ launcher_args() {
 
 export ROOT
 
-for id in baseline negatives multidrive noname; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution; do
   a=$(launcher_args "$id")
   b=$(model_args "$id")
   if [[ "$a" == "$b" ]]; then
@@ -116,13 +136,37 @@ if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got 
 if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
-for id in baseline negatives multidrive noname; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution; do
   if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
     ok
   else
     bad "missing /wm-class for '$id'"
   fi
 done
+
+# Sizing. FreeRDP exits 22 when /smart-sizing and +dynamic-resolution are both
+# present, so "exactly one of them" is an invariant, not a style preference.
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution; do
+  a=$(launcher_args "$id")
+  n=$(grep -c '^/size:' <<<"$a")
+  if [[ "$n" == "1" ]]; then ok; else bad "'$id' must emit exactly one /size:, got $n" "$a"; fi
+  smart=$(grep -cx -- '/smart-sizing' <<<"$a")
+  dyn=$(grep -cx -- '+dynamic-resolution' <<<"$a")
+  if (( smart + dyn <= 1 )); then ok; else bad "'$id' emits both /smart-sizing and +dynamic-resolution (FreeRDP exits 22)" "$a"; fi
+done
+
+if grep -qx -- '/size:1920x1080' <<<"$(launcher_args scaled-explicit)"; then ok; else bad "explicit resolution must be used verbatim"; fi
+if grep -qx -- '/smart-sizing' <<<"$(launcher_args scaled-explicit)"; then ok; else bad "scaled mode must emit /smart-sizing"; fi
+if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args scaled-explicit)"; then bad "scaled mode must not emit +dynamic-resolution"; else ok; fi
+if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args dynamic-explicit)"; then ok; else bad "dynamic mode must emit +dynamic-resolution"; fi
+if grep -qx -- '/smart-sizing' <<<"$(launcher_args fixed-auto)"; then bad "fixed mode must not emit /smart-sizing"; else ok; fi
+if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args fixed-auto)"; then bad "fixed mode must not emit +dynamic-resolution"; else ok; fi
+# 5120x1440 clamps to the 2560x1440 cap rather than being asked for verbatim.
+if grep -qx -- '/size:2560x1440' <<<"$(launcher_args fixed-auto)"; then ok; else bad "auto must clamp the monitor size to the cap"; fi
+# An unusable value falls back to auto instead of reaching FreeRDP.
+if grep -qx -- '/size:2560x1440' <<<"$(launcher_args bad-resolution)"; then ok; else bad "an out-of-range resolution must fall back to auto"; fi
+# The legacy boolean still selects the mode it used to mean.
+if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args baseline)"; then ok; else bad "legacy dynamicResolution:true must still mean dynamic"; fi
 
 # Port, domain and drive fan-out.
 if grep -qx -- '/v:10.0.0.5' <<<"$(launcher_args baseline)"; then ok; else bad "default port must be omitted"; fi

@@ -146,7 +146,8 @@ contains a password** — only a `"secret": "keyring"` marker.
         { "name": "home", "path": "/home/you/projects/shared" }
       ],
       "options": {
-        "dynamicResolution": true,
+        "displayMode": "fixed",
+        "resolution": "auto",
         "clipboard": true,
         "cert": "tofu"
       }
@@ -163,6 +164,27 @@ Edits are picked up live — no reload needed. Notes:
 - `port` and `domain` are honoured by the launcher but have no form field yet.
 - `cert` is `tofu` (trust on first use), `ignore`, or `deny`. TOFU state is
   FreeRDP's own, in `~/.config/freerdp/server/`.
+- `resolution` is `auto` or `WIDTHxHEIGHT`. `auto` matches the monitor the
+  session opens on, clamped to 2560x1440 so a large or ultrawide display does
+  not become a framebuffer that is slow to push over a WAN. Each axis is
+  clamped on its own: a 5120x1440 ultrawide asks for 2560x1440, not 2560x720.
+- `displayMode` decides what resizing the window does:
+
+  | Mode | FreeRDP flag | Resizing the window | Server involvement |
+  |---|---|---|---|
+  | `fixed` | none | letterboxes | none |
+  | `scaled` | `/smart-sizing` | scales the desktop | none |
+  | `dynamic` | `+dynamic-resolution` | renegotiates the desktop size | display driver |
+
+  `fixed` is sharpest and `dynamic` follows the window most faithfully, but
+  `dynamic` puts every resize through the server's indirect display driver,
+  which on Windows is `RdpIdd.dll`. If that crashes it takes the session with
+  it, so `scaled` is the resizable option that keeps the server out of it.
+  FreeRDP refuses `/smart-sizing` and `+dynamic-resolution` together, exiting
+  22, which is why this is one setting rather than two switches.
+- `displayMode` replaced an older `dynamicResolution` boolean. Files that still
+  have the boolean keep working: `true` reads as `dynamic`, `false` as `fixed`,
+  and absent as `dynamic`, which is what the old default did.
 
 Widget preferences live on the widget's entry in `~/.config/omarchy/shell.json`:
 

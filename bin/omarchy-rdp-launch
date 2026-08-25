@@ -17,6 +17,7 @@ set -uo pipefail
 
 XFREERDP=/usr/bin/xfreerdp3
 JQ=/usr/bin/jq
+HYPRCTL=/usr/bin/hyprctl
 NOTIFY=/usr/bin/omarchy-notification-send
 
 SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -102,6 +103,89 @@ args+=("/u:$user")
 [[ -n "$domain" ]] && args+=("/d:$domain")
 args+=("/cert:$cert")
 
+# ---------------------------------------------------------------- sizing
+
+# These mirror Model.js. Keep the two in step: tests/launcher.test.sh compares
+# the argument list this script builds against the one Model.js builds for the
+# same connection, so any drift fails the build.
+AUTO_MAX_WIDTH=2560
+AUTO_MAX_HEIGHT=1440
+MIN_WIDTH=640
+MIN_HEIGHT=480
+MAX_WIDTH=7680
+MAX_HEIGHT=4320
+FALLBACK_AUTO_WIDTH=1920
+FALLBACK_AUTO_HEIGHT=1080
+
+# The monitor the session will open on, in physical pixels. OMARCHY_RDP_AUTO_SIZE
+# overrides the lookup, which is what keeps the parity test deterministic on a
+# build machine that has no compositor to ask.
+monitor_size() {
+  local out=""
+  if [[ -n ${OMARCHY_RDP_AUTO_SIZE:-} ]]; then
+    printf '%s' "$OMARCHY_RDP_AUTO_SIZE"
+    return
+  fi
+  if [[ -x $HYPRCTL ]]; then
+    out=$("$HYPRCTL" monitors -j 2>/dev/null \
+      | "$JQ" -r 'map(select(.focused))[0] | if . then "\(.width)x\(.height)" else empty end' 2>/dev/null)
+  fi
+  if [[ -z $out ]]; then
+    printf '%sx%s' "$FALLBACK_AUTO_WIDTH" "$FALLBACK_AUTO_HEIGHT"
+  else
+    printf '%s' "$out"
+  fi
+}
+
+# Clamp each axis on its own, then round the width to a multiple of 4 and the
+# height to a multiple of 2. Same arithmetic as Model.js autoResolution().
+auto_resolution() {
+  local w=${1:-0} h=${2:-0}
+  [[ $w =~ ^[0-9]+$ ]] && (( w > 0 )) || w=$FALLBACK_AUTO_WIDTH
+  [[ $h =~ ^[0-9]+$ ]] && (( h > 0 )) || h=$FALLBACK_AUTO_HEIGHT
+  (( w > AUTO_MAX_WIDTH )) && w=$AUTO_MAX_WIDTH
+  (( h > AUTO_MAX_HEIGHT )) && h=$AUTO_MAX_HEIGHT
+  w=$(( w / 4 * 4 ))
+  h=$(( h / 2 * 2 ))
+  (( w < MIN_WIDTH )) && w=$MIN_WIDTH
+  (( h < MIN_HEIGHT )) && h=$MIN_HEIGHT
+  printf '%sx%s' "$w" "$h"
+}
+
+# "auto" or WIDTHxHEIGHT. Anything unparseable falls back to auto rather than
+# reaching FreeRDP, matching Model.js normalizeResolution().
+resolve_size() {
+  local raw w h mon
+  raw=$(printf '%s' "$conn" | "$JQ" -r '(.options.resolution // "auto") | tostring | ascii_downcase')
+  raw=${raw//×/x}
+  raw=${raw//[[:space:]]/}
+  if [[ $raw =~ ^([0-9]{3,5})x([0-9]{3,5})$ ]]; then
+    w=${BASH_REMATCH[1]}
+    h=${BASH_REMATCH[2]}
+    if (( w >= MIN_WIDTH && w <= MAX_WIDTH && h >= MIN_HEIGHT && h <= MAX_HEIGHT )); then
+      printf '%sx%s' "$w" "$h"
+      return
+    fi
+  fi
+  mon=$(monitor_size)
+  auto_resolution "${mon%x*}" "${mon#*x}"
+}
+
+# displayMode, falling back to the older dynamicResolution boolean the same way
+# Model.js normalizeDisplayMode() does.
+display_mode() {
+  local mode
+  mode=$(printf '%s' "$conn" | "$JQ" -r '(.options.displayMode // "") | tostring | ascii_downcase')
+  case $mode in
+    fixed|scaled|dynamic) printf '%s' "$mode"; return ;;
+  esac
+  if [[ $(printf '%s' "$conn" | "$JQ" -r 'if .options.dynamicResolution == false then "false" else "true" end') == "false" ]]; then
+    printf 'fixed'
+  else
+    printf 'dynamic'
+  fi
+}
+
 # Careful with jq's `//`: it substitutes for false as well as null, so
 # `.options.clipboard // true` would turn an explicit false back into true and
 # silently ignore the user switching clipboard off. Test for false directly.
@@ -115,9 +199,15 @@ if [[ $(bool_field options.clipboard) == "false" ]]; then
 else
   args+=("+clipboard")
 fi
-if [[ $(bool_field options.dynamicResolution) != "false" ]]; then
-  args+=("+dynamic-resolution")
-fi
+# Without a size FreeRDP picks 1024x768, a postage stamp on a modern display.
+# Emitted for every mode: under "dynamic" it is the size the desktop starts at
+# before the first resize. FreeRDP exits 22 if /smart-sizing and
+# +dynamic-resolution are both present, so exactly one of them is emitted.
+args+=("/size:$(resolve_size)")
+case $(display_mode) in
+  scaled)  args+=("/smart-sizing") ;;
+  dynamic) args+=("+dynamic-resolution") ;;
+esac
 
 # One /drive: per mapping — verified additive in FreeRDP 3.
 while IFS=$'\t' read -r dname dpath; do

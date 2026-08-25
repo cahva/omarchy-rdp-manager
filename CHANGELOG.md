@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.2.0
+
+### Added
+
+- The remote desktop size is now a per-connection setting
+  ([#8](https://github.com/cahva/omarchy-rdp-manager/issues/8)). Nothing emitted
+  a `/size`, so FreeRDP fell back to its own default of 1024x768. On a 5120x1440
+  monitor at scale 1.25 that is an 819x614 window in the corner, with no way to
+  fix it short of turning on dynamic resolution.
+- `resolution` is `auto` or `WIDTHxHEIGHT`, offered in the form as a dropdown of
+  common sizes plus a custom field. `auto` matches the monitor the session opens
+  on, clamped to 2560x1440. Each axis is clamped separately, so an ultrawide
+  asks for 2560x1440 rather than the 2560x720 that preserving its aspect ratio
+  would give.
+- `displayMode` decides what resizing the window does: `fixed` letterboxes,
+  `scaled` scales the desktop with `/smart-sizing`, and `dynamic` renegotiates
+  it with `+dynamic-resolution` as before. `scaled` is new, and it is the way to
+  get a resizable window without involving the server's display driver.
+
+### Changed
+
+- `displayMode` replaces the `dynamicResolution` boolean in the form. Existing
+  files are unaffected: the boolean is still read, with `true` meaning
+  `dynamic`, `false` meaning `fixed`, and absent meaning `dynamic`, which is
+  what the old default did. New connections are created as `fixed`, since an
+  auto-sized window no longer needs dynamic resolution just to be usable.
+
+FreeRDP exits 22 if `/smart-sizing` and `+dynamic-resolution` are both passed,
+so the launcher and `Model.js` emit exactly one of them, and both test suites
+assert it.
+
 ## 0.1.2
 
 ### Fixed
