@@ -257,9 +257,13 @@ saved connection. Omarchy 4 configures Hyprland in Lua:
 
 ```lua
 -- ~/.config/hypr/hyprland.lua
-o.window("^omarchy-rdp-", { float = true, center = true })
-o.window("^omarchy-rdp-", { workspace = "9" })
+o.window("^omarchy-rdp-.*", { float = true, center = true })
+o.window("^omarchy-rdp-.*", { workspace = "9" })
 ```
+
+Note the trailing `.*`. Hyprland matches the pattern against the **whole** class,
+so `"^omarchy-rdp-"` silently matches nothing: it is a prefix, and the class is
+longer than it. A rule that does not match produces no error, it just never fires.
 
 Without a rule the window opens wherever the compositor puts it, which on a large
 monitor tends to be the top-left corner. Do not add a `size` rule: the plugin
