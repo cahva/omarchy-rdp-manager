@@ -252,13 +252,18 @@ omarchy-shell io.github.cahva.rdp-manager disconnect my-server
 
 ## Hyprland window rules
 
-Every session gets the window class `omarchy-rdp-<id>`, so you can rule on it:
+Every session gets the window class `omarchy-rdp-<id>`, so one rule covers every
+saved connection. Omarchy 4 configures Hyprland in Lua:
 
+```lua
+-- ~/.config/hypr/hyprland.lua
+o.window("^omarchy-rdp-", { float = true, center = true })
+o.window("^omarchy-rdp-", { workspace = "9" })
 ```
-# ~/.config/hypr/hyprland.conf
-windowrulev2 = workspace 9,        class:^(omarchy-rdp-.*)$
-windowrulev2 = idleinhibit always, class:^(omarchy-rdp-.*)$
-```
+
+Without a rule the window opens wherever the compositor puts it, which on a large
+monitor tends to be the top-left corner. Do not add a `size` rule: the plugin
+already asks FreeRDP for a resolution, and a size rule fights it.
 
 That class is also how the plugin distinguishes *connecting* from *connected*:
 FreeRDP maps no window until the connection actually succeeds, so window presence is
@@ -271,9 +276,8 @@ pre-0.56 dispatcher.
 
 ## Sessions outlive the shell
 
-Sessions are started detached (`setsid`), so `omarchy-restart-shell` — and the
-hot-reload that fires whenever a plugin file is saved — will not take your RDP
-session down with it. State is tracked in `$XDG_RUNTIME_DIR/omarchy-rdp/`, which is
+Sessions are started detached (`setsid`), so restarting or reloading the shell will
+not take your RDP session down with it. State is tracked in `$XDG_RUNTIME_DIR/omarchy-rdp/`, which is
 how a freshly started shell re-attaches to a session already running.
 
 That directory must be owned by you and mode `0700`, and the helpers refuse it
@@ -313,11 +317,22 @@ cd omarchy-rdp-manager
 
 ./dev-install.sh                 # rsync into ~/.config/omarchy/plugins/ + reload
 omarchy plugin enable io.github.cahva.rdp-manager right
+omarchy restart shell            # required after any .qml change, see below
 
 node tests/model.test.js         # pure logic
 node tests/manifest.test.js      # manifest + repo hygiene
 tests/launcher.test.sh           # launcher/Model.js argv parity
 ```
+
+Omarchy launches Quickshell with `QS_DISABLE_FILE_WATCHER=1`, so QML is **not**
+hot-reloaded. Saving a file under `~/.config/omarchy/plugins/` makes Omarchy
+re-register the plugin, and `omarchy-shell shell rescanPlugins` forces that, but
+neither rebuilds a QML component: Qt caches compiled types by URL for the life of
+the process, so even disabling and re-enabling the plugin re-instantiates the old
+one. Only `omarchy restart shell` picks up a `.qml` edit.
+
+`bin/` and `Model.js` are different. The launcher is a script executed afresh on
+every connect, so a change there is live as soon as `dev-install.sh` has run.
 
 `Model.js` holds every pure function and is shared by `Service.qml`, `Panel.qml` and
 the tests. `Service.qml` is loaded **once per shell session** and owns all state, the

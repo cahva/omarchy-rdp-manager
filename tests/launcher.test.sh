@@ -85,7 +85,7 @@ cat > "$TMP/connections.json" <<'JSON'
       "drives": [], "options": { "displayMode": "scaled", "resolution": "1920x1080" } },
     { "id": "dynamic-explicit", "name": "Dynamic explicit", "host": "10.0.0.10", "port": 3389,
       "user": "u", "domain": "",
-      "drives": [], "options": { "displayMode": "dynamic", "resolution": "2560x1440" } },
+      "drives": [], "options": { "displayMode": "dynamic", "resolution": "1280x1024" } },
     { "id": "bad-resolution", "name": "Bad resolution", "host": "10.0.0.11", "port": 3389,
       "user": "u", "domain": "",
       "drives": [], "options": { "displayMode": "fixed", "resolution": "99x99" } },
@@ -159,6 +159,10 @@ if grep -qx -- '/size:1920x1080' <<<"$(launcher_args scaled-explicit)"; then ok;
 if grep -qx -- '/smart-sizing' <<<"$(launcher_args scaled-explicit)"; then ok; else bad "scaled mode must emit /smart-sizing"; fi
 if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args scaled-explicit)"; then bad "scaled mode must not emit +dynamic-resolution"; else ok; fi
 if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args dynamic-explicit)"; then ok; else bad "dynamic mode must emit +dynamic-resolution"; fi
+# Under dynamic the size is only where the window opens, but it is still
+# honoured: without it FreeRDP would start every session at 1024x768. The
+# fixture asks for 1280x1024 so a silently-dropped value would be visible.
+if grep -qx -- '/size:1280x1024' <<<"$(launcher_args dynamic-explicit)"; then ok; else bad "dynamic mode must honour the starting size" "$(launcher_args dynamic-explicit)"; fi
 if grep -qx -- '/smart-sizing' <<<"$(launcher_args fixed-auto)"; then bad "fixed mode must not emit /smart-sizing"; else ok; fi
 if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args fixed-auto)"; then bad "fixed mode must not emit +dynamic-resolution"; else ok; fi
 # 5120x1440 clamps to the 2560x1440 cap rather than being asked for verbatim.

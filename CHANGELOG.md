@@ -18,6 +18,24 @@
   `scaled` scales the desktop with `/smart-sizing`, and `dynamic` renegotiates
   it with `+dynamic-resolution` as before. `scaled` is new, and it is the way to
   get a resizable window without involving the server's display driver.
+- Under `dynamic` the picker is labelled **Starting size**, because the desktop
+  is renegotiated on the first resize and the value only decides where the
+  window opens. It is still honoured in that mode: dropping it would put every
+  dynamic session back at FreeRDP's 1024x768 default, and legacy files have no
+  `displayMode`, so they read as `dynamic` and hand-editing a size there would
+  otherwise do nothing.
+
+### Fixed
+
+- The Hyprland window rules in the README used `windowrulev2` in
+  `hyprland.conf`. Omarchy 4 configures Hyprland in Lua, so that syntax does
+  nothing. They are now `o.window(...)` calls, with a `center` rule, since
+  without one the window opens in the corner of a large monitor.
+- The README said plugin files hot-reload when saved. Omarchy starts Quickshell
+  with `QS_DISABLE_FILE_WATCHER=1`, so QML does not: `omarchy restart shell` is
+  required after a `.qml` change, and neither `rescanPlugins` nor disabling and
+  re-enabling the plugin is enough, because Qt caches compiled types by URL for
+  the life of the process.
 
 ### Changed
 

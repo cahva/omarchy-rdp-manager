@@ -743,13 +743,27 @@ Panel {
               onChanged: function(v) { root.formDisplayMode = v }
             }
 
+            // Under "dynamic" the desktop is renegotiated on the first resize,
+            // so this is only the size the window opens at. Calling it a
+            // resolution there would be a lie, but hiding it would take away
+            // the one thing that stops the window opening tiny.
             Dropdown {
               width: parent.width
-              label: "Resolution"
+              label: root.formDisplayMode === "dynamic" ? "Starting size" : "Resolution"
               value: root.formResolution
               fontFamily: root.fontFamily
               options: root.resolutionOptions
               onChanged: function(v) { root.formResolution = v }
+            }
+
+            Text {
+              visible: root.formDisplayMode === "dynamic"
+              width: parent.width
+              text: "The desktop follows the window after that."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
             }
 
             FormField {

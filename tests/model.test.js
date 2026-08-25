@@ -148,6 +148,22 @@ test("normalizeResolution falls back to auto rather than passing junk on", funct
   assert.strictEqual(M.normalizeResolution("1600 \u00d7 900"), "1600x900")
 })
 
+test("resolveResolution honours an explicit size in every mode", function () {
+  // Under dynamic this only decides where the window opens, but dropping it
+  // would put every dynamic session back at FreeRDP's 1024x768 default. It
+  // also matters for legacy files: those have no displayMode, so they read as
+  // dynamic, and ignoring the size there would make hand-editing it a no-op.
+  ;["fixed", "scaled", "dynamic"].forEach(function (mode) {
+    var conn = { options: { displayMode: mode, resolution: "1280x1024" } }
+    assert.deepStrictEqual(M.resolveResolution(conn, { width: 5120, height: 1440 }),
+      { width: 1280, height: 1024 }, mode)
+  })
+  var legacy = { options: { resolution: "1280x1024" } }
+  assert.strictEqual(M.normalizeConnection(legacy).options.displayMode, "dynamic")
+  assert.deepStrictEqual(M.resolveResolution(legacy, { width: 5120, height: 1440 }),
+    { width: 1280, height: 1024 })
+})
+
 test("resolveResolution prefers an explicit size over the monitor", function () {
   var explicit = { options: { resolution: "1280x1024" } }
   assert.deepStrictEqual(M.resolveResolution(explicit, { width: 5120, height: 1440 }),

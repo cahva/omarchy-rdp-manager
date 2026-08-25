@@ -167,6 +167,9 @@ function normalizeDisplayMode(options) {
 // reads it from hyprctl, the panel from its own screen.
 function resolveResolution(conn, autoSize) {
   var c = normalizeConnection(conn)
+  // Honoured in every mode. Under "dynamic" the desktop is renegotiated on the
+  // first resize, so this only decides where the window opens, but that is
+  // exactly the size that matters most: without it FreeRDP starts at 1024x768.
   if (c.options.resolution !== "auto") {
     var explicit = parseResolution(c.options.resolution)
     if (explicit) return explicit
