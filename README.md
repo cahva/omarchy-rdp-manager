@@ -257,7 +257,7 @@ saved connection. Omarchy 4 configures Hyprland in Lua:
 
 ```lua
 -- ~/.config/hypr/hyprland.lua
-o.window("^omarchy-rdp-.*", { float = true, center = true })
+o.window("^omarchy-rdp-.*", { center = true })
 o.window("^omarchy-rdp-.*", { workspace = "9" })
 ```
 
@@ -265,9 +265,18 @@ Note the trailing `.*`. Hyprland matches the pattern against the **whole** class
 so `"^omarchy-rdp-"` silently matches nothing: it is a prefix, and the class is
 longer than it. A rule that does not match produces no error, it just never fires.
 
-Without a rule the window opens wherever the compositor puts it, which on a large
-monitor tends to be the top-left corner. Do not add a `size` rule: the plugin
-already asks FreeRDP for a resolution, and a size rule fights it.
+Resist adding `float = true`. FreeRDP already decides it, and better than a rule
+can: a `fixed` or `scaled` desktop cannot be resized, so the window arrives with
+fixed size hints and Hyprland floats it, while a `dynamic` desktop is resizable
+and tiles, letting the remote resolution follow the tile. Forcing `float` takes
+that away and leaves every dynamic session in a floating window it did not need.
+`center` is the right half to keep: it tidies the floating case and is ignored
+for a tiled window.
+
+Without any rule a floating session opens wherever the compositor puts it, which
+on a large monitor tends to be the top-left corner. Do not add a `size` rule
+either: the plugin already asks FreeRDP for a resolution, and a size rule fights
+it.
 
 That class is also how the plugin distinguishes *connecting* from *connected*:
 FreeRDP maps no window until the connection actually succeeds, so window presence is

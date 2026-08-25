@@ -30,9 +30,12 @@
 - The Hyprland window rules in the README used `windowrulev2` in
   `hyprland.conf`. Omarchy 4 configures Hyprland in Lua, so that syntax does
   nothing. They are now `o.window(...)` calls, with a `center` rule, since
-  without one the window opens in the corner of a large monitor. The patterns
-  end in `.*`: Hyprland matches against the whole class, so a bare
-  `"^omarchy-rdp-"` prefix matches nothing and fails silently.
+  without one a floating session opens in the corner of a large monitor. The
+  patterns end in `.*`: Hyprland matches against the whole class, so a bare
+  `"^omarchy-rdp-"` prefix matches nothing and fails silently. They set only
+  `center`, not `float`: FreeRDP marks a fixed or scaled desktop as
+  non-resizable so Hyprland floats it anyway, while a dynamic desktop is
+  resizable and tiles, which is what you want there.
 - The README said plugin files hot-reload when saved. Omarchy starts Quickshell
   with `QS_DISABLE_FILE_WATCHER=1`, so QML does not: `omarchy restart shell` is
   required after a `.qml` change, and neither `rescanPlugins` nor disabling and
