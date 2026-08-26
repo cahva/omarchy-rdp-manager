@@ -79,6 +79,11 @@ function uniqueId(name, takenIds) {
 var DEFAULT_PORT = 3389
 var CERT_POLICIES = ["tofu", "ignore", "deny"]
 
+// FreeRDP's /scale: accepts exactly these three values (see `xfreerdp3 --help`).
+// "100" is native size and is treated as "off" — buildArgs omits the flag
+// entirely rather than emit a no-op /scale:100.
+var SCALE_VALUES = ["100", "140", "180"]
+
 // ------------------------------------------------------- display and sizing
 
 // How the remote desktop relates to the client window.
@@ -195,6 +200,13 @@ function normalizeDrives(drives) {
   return out
 }
 
+// Coerces to a string first: a hand-edited file might have 140 as a JSON
+// number rather than "140", and SCALE_VALUES compares strings.
+function normalizeScale(scale) {
+  var s = trim(String(scale == null ? "" : scale))
+  return SCALE_VALUES.indexOf(s) === -1 ? "100" : s
+}
+
 function normalizeOptions(options) {
   var o = options && typeof options === "object" ? options : {}
   var cert = trim(o.cert).toLowerCase()
@@ -202,7 +214,8 @@ function normalizeOptions(options) {
     displayMode: normalizeDisplayMode(o),
     resolution: normalizeResolution(o.resolution),
     clipboard: o.clipboard !== false,
-    cert: CERT_POLICIES.indexOf(cert) === -1 ? "tofu" : cert
+    cert: CERT_POLICIES.indexOf(cert) === -1 ? "tofu" : cert,
+    scale: normalizeScale(o.scale)
   }
 }
 
@@ -353,6 +366,8 @@ function buildArgs(conn, autoSize) {
   // negative one. Emitting +clipboard as well keeps the intent readable in a
   // dry run and matches what a user would type by hand.
   args.push(c.options.clipboard ? "+clipboard" : "-clipboard")
+  // "100" is native size; omit the flag rather than pass a no-op /scale:100.
+  if (c.options.scale !== "100") args.push("/scale:" + c.options.scale)
 
   // Without a size FreeRDP picks 1024x768, which is a postage stamp on a
   // modern display. The size is emitted for every mode: under "dynamic" it is
@@ -648,13 +663,13 @@ function blankConnection() {
     domain: "",
     secret: "keyring",
     drives: [],
-    options: { displayMode: "fixed", resolution: "auto", clipboard: true, cert: "tofu" }
+    options: { displayMode: "fixed", resolution: "auto", clipboard: true, cert: "tofu", scale: "100" }
   }
 }
 
 if (typeof module !== "undefined") module.exports = {
   asList, slugify, isValidId, uniqueId,
-  normalizeDrive, normalizeDrives, normalizeOptions, normalizePort, normalizeConnection,
+  normalizeDrive, normalizeDrives, normalizeOptions, normalizeScale, normalizePort, normalizeConnection,
   parseConfig, serializeConfig, validateConnection,
   wmClassFor, buildArgs, previewArgs, previewCommand,
   describeExit, isFailureExit, EXIT_MESSAGES,
@@ -662,6 +677,6 @@ if (typeof module !== "undefined") module.exports = {
   formatDuration, endpointFor, driveSummary, rowStatus, tooltipFor, heroMeta,
   upsertConnection, removeConnection, findConnection, blankConnection,
   autoResolution, parseResolution, normalizeResolution, normalizeDisplayMode, resolveResolution,
-  DEFAULT_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS,
+  DEFAULT_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS, SCALE_VALUES,
   AUTO_MAX_WIDTH, AUTO_MAX_HEIGHT
 }

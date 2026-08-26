@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `scale` option: FreeRDP's `/scale:` DPI scaling factor — normal (`100`),
+  medium (`140`), or large (`180`), the only values FreeRDP accepts — now a
+  form field alongside Certificate policy. Normal emits no flag; the launcher
+  and Model.js both fall back to it silently for anything else on disk. This
+  is independent of `displayMode` — that controls what *resizing the window*
+  does, `scale` controls how large the remote desktop's own UI renders.
+
 ## 0.2.0
 
 ### Added

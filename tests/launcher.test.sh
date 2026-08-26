@@ -91,7 +91,13 @@ cat > "$TMP/connections.json" <<'JSON'
       "drives": [], "options": { "displayMode": "fixed", "resolution": "99x99" } },
     { "id": "unicode-resolution", "name": "Unicode resolution", "host": "10.0.0.12", "port": 3389,
       "user": "u", "domain": "",
-      "drives": [], "options": { "displayMode": "fixed", "resolution": "1600 \u00d7 900" } }
+      "drives": [], "options": { "displayMode": "fixed", "resolution": "1600 \u00d7 900" } },
+    { "id": "hidpi", "name": "HiDPI", "host": "10.0.0.13", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "scale": 180 } },
+    { "id": "bad-scale", "name": "Bad scale", "host": "10.0.0.14", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "scale": "250" } }
   ]
 }
 JSON
@@ -114,7 +120,7 @@ launcher_args() {
 
 export ROOT
 
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
   a=$(launcher_args "$id")
   b=$(model_args "$id")
   if [[ "$a" == "$b" ]]; then
@@ -136,7 +142,7 @@ if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got 
 if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
   if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
     ok
   else
@@ -146,7 +152,7 @@ done
 
 # Sizing. FreeRDP exits 22 when /smart-sizing and +dynamic-resolution are both
 # present, so "exactly one of them" is an invariant, not a style preference.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
   a=$(launcher_args "$id")
   n=$(grep -c '^/size:' <<<"$a")
   if [[ "$n" == "1" ]]; then ok; else bad "'$id' must emit exactly one /size:, got $n" "$a"; fi
@@ -173,6 +179,10 @@ if grep -qx -- '/size:2560x1440' <<<"$(launcher_args bad-resolution)"; then ok; 
 if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args baseline)"; then ok; else bad "legacy dynamicResolution:true must still mean dynamic"; fi
 
 # Port, domain and drive fan-out.
+if grep -qx -- '/scale:180' <<<"$(launcher_args hidpi)"; then ok; else bad "explicit scale must be passed to FreeRDP" "$(launcher_args hidpi)"; fi
+if grep -q '^/scale:' <<<"$(launcher_args baseline)"; then bad "native scale (100/unset) must not emit /scale:"; else ok; fi
+if grep -q '^/scale:' <<<"$(launcher_args bad-scale)"; then bad "an out-of-range scale must fall back to native (no /scale:)" "$(launcher_args bad-scale)"; else ok; fi
+
 if grep -qx -- '/v:10.0.0.5' <<<"$(launcher_args baseline)"; then ok; else bad "default port must be omitted"; fi
 if grep -qx -- '/v:rdp.example.com:4489' <<<"$(launcher_args negatives)"; then ok; else bad "custom port must be included"; fi
 if grep -qx -- '/d:CORP' <<<"$(launcher_args negatives)"; then ok; else bad "domain must be passed"; fi
