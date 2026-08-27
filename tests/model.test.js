@@ -94,6 +94,45 @@ test("normalizeOptions defaults on, and honours an explicit false", function () 
 
 // ------------------------------------------------------- display and sizing
 
+test("formatHostPort hides the default port and shows any other", function () {
+  assert.strictEqual(M.formatHostPort("example.com", 3389), "example.com")
+  assert.strictEqual(M.formatHostPort("example.com", 4000), "example.com:4000")
+})
+
+test("formatHostPort and splitHostPort round-trip a non-default port", function () {
+  var combined = M.formatHostPort("example.com", 4000)
+  assert.deepStrictEqual(M.splitHostPort(combined), { host: "example.com", port: 4000 })
+})
+
+test("splitHostPort separates a plain host:port", function () {
+  assert.deepStrictEqual(M.splitHostPort("example.com:4000"), { host: "example.com", port: 4000 })
+  assert.deepStrictEqual(M.splitHostPort("10.0.0.5:3390"), { host: "10.0.0.5", port: 3390 })
+})
+
+test("splitHostPort leaves a bare host with no colon alone", function () {
+  assert.deepStrictEqual(M.splitHostPort("example.com"), { host: "example.com", port: null })
+})
+
+test("splitHostPort handles a bracketed IPv6 literal, with or without a port", function () {
+  assert.deepStrictEqual(M.splitHostPort("[::1]:3389"), { host: "[::1]", port: 3389 })
+  assert.deepStrictEqual(M.splitHostPort("[2001:db8::1]:4000"), { host: "[2001:db8::1]", port: 4000 })
+  assert.deepStrictEqual(M.splitHostPort("[::1]"), { host: "[::1]", port: null })
+})
+
+test("splitHostPort refuses to guess at an unbracketed IPv6 literal", function () {
+  // Two-or-more colons with no brackets is an address, not host:port — the
+  // last segment happening to be all digits (":1" here) must not be read as
+  // a port, or a real IPv6 host would get silently mangled.
+  assert.deepStrictEqual(M.splitHostPort("2001:db8::1"), { host: "2001:db8::1", port: null })
+  assert.deepStrictEqual(M.splitHostPort("::1"), { host: "::1", port: null })
+})
+
+test("splitHostPort ignores a colon suffix that isn't a valid port", function () {
+  assert.deepStrictEqual(M.splitHostPort("example.com:notaport"), { host: "example.com:notaport", port: null })
+  assert.deepStrictEqual(M.splitHostPort("example.com:99999"), { host: "example.com:99999", port: null })
+  assert.deepStrictEqual(M.splitHostPort("example.com:0"), { host: "example.com:0", port: null })
+})
+
 test("normalizeDisplayMode reads the legacy dynamicResolution boolean", function () {
   // Files written before displayMode existed carry only the boolean. Absent
   // entirely has to keep meaning what it used to mean, which was dynamic on,
