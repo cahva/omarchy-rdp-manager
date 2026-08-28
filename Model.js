@@ -225,6 +225,40 @@ function normalizePort(port) {
   return Math.floor(n)
 }
 
+// The form has one Host field and no Port field, so "host:port" typed there
+// is the only way to set a port through the UI. Splits it out on save.
+//
+// Split on the *last* colon, not the first: a bracketed IPv6 literal with a
+// port — "[::1]:3389" — only works if the colon after "]" is the one used, and
+// splitting on the first colon inside an unbracketed IPv6 address would tear
+// the address itself apart. A bare IPv6 host with no port ("2001:db8::1") is
+// genuinely ambiguous with "host:port" once brackets are gone, so it is left
+// untouched unless bracketed — better to do nothing than guess wrong on an
+// address, not a hostname.
+function splitHostPort(rawHost) {
+  var host = trim(rawHost)
+
+  var bracketed = host.match(/^\[([^\]]+)\](?::(\d{1,5}))?$/)
+  if (bracketed) {
+    if (!bracketed[2]) return { host: host, port: null }
+    var bracketedPort = Number(bracketed[2])
+    if (bracketedPort < 1 || bracketedPort > 65535) return { host: host, port: null }
+    return { host: "[" + bracketed[1] + "]", port: bracketedPort }
+  }
+
+  var lastColon = host.lastIndexOf(":")
+  // Exactly one colon: safe to treat as host:port. Two or more with no
+  // brackets reads as an unbracketed IPv6 literal — leave it alone.
+  if (lastColon <= 0 || host.indexOf(":") !== lastColon) return { host: host, port: null }
+
+  var portPart = host.slice(lastColon + 1)
+  if (!/^\d{1,5}$/.test(portPart)) return { host: host, port: null }
+  var port = Number(portPart)
+  if (port < 1 || port > 65535) return { host: host, port: null }
+
+  return { host: host.slice(0, lastColon), port: port }
+}
+
 // Bring a connection read from disk (or built by the form) into the exact
 // shape the rest of the code assumes. Missing keys get defaults; unknown keys
 // are dropped so a hand-edited file cannot smuggle anything into buildArgs.
@@ -357,7 +391,7 @@ function buildArgs(conn, autoSize) {
   var c = normalizeConnection(conn)
   var args = []
 
-  args.push(c.port === DEFAULT_PORT ? "/v:" + c.host : "/v:" + c.host + ":" + c.port)
+  args.push("/v:" + formatHostPort(c.host, c.port))
   args.push("/u:" + c.user)
   if (c.domain) args.push("/d:" + c.domain)
 
@@ -645,9 +679,15 @@ function formatDuration(seconds) {
   return d + "d " + (h % 24) + "h"
 }
 
+// The one spot the default port is worth hiding: 3389 is what a reader
+// assumes anyway, so only a non-default port earns the extra characters.
+function formatHostPort(host, port) {
+  return port === DEFAULT_PORT ? host : host + ":" + port
+}
+
 function endpointFor(conn) {
   var c = normalizeConnection(conn)
-  var host = c.port === DEFAULT_PORT ? c.host : c.host + ":" + c.port
+  var host = formatHostPort(c.host, c.port)
   var user = c.domain ? c.domain + "\\" + c.user : c.user
   return user ? user + "@" + host : host
 }
@@ -774,13 +814,14 @@ function blankConnection() {
 
 if (typeof module !== "undefined") module.exports = {
   asList, slugify, isValidId, uniqueId,
-  normalizeDrive, normalizeDrives, normalizeOptions, normalizeScale, normalizePort, normalizeConnection,
+  normalizeDrive, normalizeDrives, normalizeOptions, normalizeScale, normalizePort,
+  splitHostPort, normalizeConnection,
   parseConfig, serializeConfig, validateConnection,
   wmClassFor, buildArgs, previewArgs, previewCommand,
   describeExit, describeEnd, isFailureExit, isSessionEndCode, isDroppedSession,
   EXIT_MESSAGES, NORMAL_END_CODES,
   normalizeSession, parseStatus, sessionMap, isLive, summarize, pollInterval,
-  formatDuration, endpointFor, driveSummary, rowStatus, tooltipFor, heroMeta,
+  formatDuration, endpointFor, formatHostPort, driveSummary, rowStatus, tooltipFor, heroMeta,
   upsertConnection, removeConnection, findConnection, blankConnection,
   autoResolution, parseResolution, normalizeResolution, normalizeDisplayMode, resolveResolution,
   DEFAULT_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS, SCALE_VALUES,

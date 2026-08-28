@@ -7,6 +7,14 @@
 
 ### Added
 
+- The Host field now saves `host:port` into separate `host`/`port` fields on
+  disk instead of persisting the port as part of the hostname, while still
+  showing and accepting the combined `host:port` form in the field itself —
+  reopening a connection recombines them for display. Splits on the *last*
+  colon so a bracketed IPv6 literal with a port (`[::1]:3389`) works too; an
+  unbracketed IPv6 literal (`2001:db8::1`) is left alone, since it is
+  genuinely ambiguous with `host:port` once there is more than one colon and
+  no brackets to disambiguate.
 - `scale` option: FreeRDP's `/scale:` DPI scaling factor — normal (`100`),
   medium (`140`), or large (`180`), the only values FreeRDP accepts — now a
   form field alongside Certificate policy. Normal emits no flag; the launcher

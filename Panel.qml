@@ -209,7 +209,10 @@ Panel {
       root.formIsNew = false
       root.formId = conn.id
       root.formName = conn.name
-      root.formHost = conn.host
+      // Recombined for display so editing still shows the full address, the
+      // way it did before host/port were split apart on disk. formConnection()
+      // splits it right back out on save.
+      root.formHost = Model.formatHostPort(conn.host, conn.port)
       root.formUser = conn.user
       root.formCert = conn.options.cert
       root.formScale = conn.options.scale
@@ -264,13 +267,17 @@ Panel {
 
   function formConnection() {
     var id = root.formIsNew && svc ? svc.newIdFor(root.formName) : root.formId
+    // There is still no separate Port field, so "host:port" typed into Host
+    // is the only way to set one through the UI. Split it out on save rather
+    // than persist the colon inside the hostname.
+    var hp = Model.splitHostPort(root.formHost)
+    var fallbackPort = root.formIsNew ? Model.DEFAULT_PORT : (svc && svc.connectionFor(root.formId)
+      ? svc.connectionFor(root.formId).port : Model.DEFAULT_PORT)
     return {
       id: id,
       name: root.formName,
-      host: root.formHost,
-      // No port field in this version; preserve whatever is on disk.
-      port: root.formIsNew ? Model.DEFAULT_PORT : (svc && svc.connectionFor(root.formId)
-        ? svc.connectionFor(root.formId).port : Model.DEFAULT_PORT),
+      host: hp.host,
+      port: hp.port !== null ? hp.port : fallbackPort,
       user: root.formUser,
       domain: root.formIsNew ? "" : (svc && svc.connectionFor(root.formId)
         ? svc.connectionFor(root.formId).domain : ""),

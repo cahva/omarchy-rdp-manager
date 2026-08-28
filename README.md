@@ -162,7 +162,14 @@ Edits are picked up live — no reload needed. Notes:
 - `id` is generated from the name and is then **immutable**: it is the keyring
   lookup key and the `/wm-class` suffix used to detect the session's window.
   Changing it by hand orphans the stored password.
-- `port` and `domain` are honoured by the launcher but have no form field yet.
+- `domain` is honoured by the launcher but has no form field yet.
+- `port` has no dedicated form field either, but the Host field shows and
+  accepts `host:port` as one string — typing it in splits `host`/`port` apart
+  on save, and reopening a connection recombines them for display, so editing
+  still shows the full address the way it always has. A bracketed IPv6
+  literal works too (`[::1]:3389`); an unbracketed one (`2001:db8::1`) is left
+  alone rather than guessed at, since a bare IPv6 address is indistinguishable
+  from `host:port` once the colon count goes above one.
 - `cert` is `tofu` (trust on first use), `ignore`, or `deny`. TOFU state is
   FreeRDP's own, in `~/.config/freerdp/server/`.
 - `resolution` is `auto` or `WIDTHxHEIGHT`. `auto` matches the monitor the
