@@ -229,11 +229,15 @@ In the panel:
 |---|---|
 | `j` / `k` | Move between connections |
 | `Enter` | Connect — or focus the window if already connected |
-| `c` / `x` | Connect / disconnect |
+| `c` / `s` | Connect / disconnect |
 | `e` / `d` | Edit / delete |
 | `t` | Test the connection without opening a window |
 | `n` | New connection |
 | `Esc` | Close the panel, or back out of the form |
+
+`x` also deletes, because Omarchy's shared panel key handler reserves it for that
+across every panel and consumes it before this plugin sees it. Disconnect is `s`
+rather than `x` for that reason.
 
 **Test** runs FreeRDP with `+auth-only`, which authenticates and stops before
 opening a window. It is only ever run when you ask for it: it touches the network,

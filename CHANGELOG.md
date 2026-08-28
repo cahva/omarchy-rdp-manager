@@ -27,6 +27,19 @@
 
 ### Fixed
 
+- `x` opened the delete confirmation instead of disconnecting
+  ([#11](https://github.com/cahva/omarchy-rdp-manager/issues/11), reported by
+  @schotime). Omarchy's shared `PanelKeyCatcher` reserves `x` and `X` for delete
+  across every panel and emits `deleteRequested()` before a panel's own
+  `onTextKey` runs, so this plugin's `x` binding was dead code and there was no
+  keyboard route to disconnect at all. Disconnect is now **`s`**, for stop, and
+  the help footer and README say so. `x` still deletes, which is the convention
+  everywhere else in Omarchy.
+- Three checks now guard that class of mistake: no binding may use a key the
+  catcher reserves, and the help footer and the README key table must both list
+  exactly the keys that are actually bound. The footer advertised `x disconnect`
+  for a binding that could not fire, which is how this stayed invisible.
+
 - A session that dropped mid-use was reported as a connect-time problem
   ([#7](https://github.com/cahva/omarchy-rdp-manager/issues/7)). A session that
   had been up for nearly two hours was reset by the server, FreeRDP exited 147,
