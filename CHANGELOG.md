@@ -31,6 +31,21 @@
   another connection. Those showed as "Could not start FreeRDP (exit 2)". They
   are named now, and the ones that are ordinary endings no longer count as
   failures.
+- Disconnect could leave a session running with its window still on screen.
+  It sent a single `SIGTERM` and assumed that was the end of it. FreeRDP's
+  handler calls `freerdp_abort_connect_context`, which cancels a connection
+  *attempt*; an established session never checks that flag, and one blocked on a
+  wedged socket never will. Caught live with 836KB unread and 1.1MB unsent on an
+  `ESTABLISHED` socket, the signal acknowledged in FreeRDP's log, and the process
+  still running twenty minutes later while the launcher waited on it. The button
+  looked like it did nothing. Termination now escalates to `SIGKILL` after a
+  grace period, ten seconds by default and settable with
+  `OMARCHY_RDP_TERM_GRACE`.
+- The escalation verifies the process start time before it fires. By the time
+  the grace period is up the launcher may have exited and the pid been reused,
+  and a delayed `SIGKILL` on a bare pid is the same bug
+  [#3](https://github.com/cahva/omarchy-rdp-manager/issues/3) fixed in
+  disconnect. Both the escalation and the refusal are covered by tests.
 - `isFailureExit` no longer treats 130 as Ctrl-C. The launcher already records a
   deliberate stop as phase `stopped` with exit 0, so a 130 reaching that
   function could only ever be `XF_EXIT_PROTOCOL`, and the exception hid it.

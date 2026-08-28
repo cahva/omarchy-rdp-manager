@@ -16,6 +16,9 @@
 set -uo pipefail
 
 XFREERDP=/usr/bin/xfreerdp3
+# How long a session gets to shut down cleanly before it is killed outright.
+# See on_term() for why an escalation is needed at all.
+TERM_GRACE=${OMARCHY_RDP_TERM_GRACE:-10}
 JQ=/usr/bin/jq
 HYPRCTL=/usr/bin/hyprctl
 NOTIFY=/usr/bin/omarchy-notification-send
@@ -294,6 +297,9 @@ write_state() {
 
 stopped=0
 child=0
+# Initialised alongside child so on_term() cannot trip over an unset variable
+# if a signal lands between starting FreeRDP and recording its identity.
+child_ticks=""
 # A TERM aimed at this script (that is how the panel's Disconnect works) has to
 # reach xfreerdp3 too, so the session actually closes. The trap body is
 # evaluated when the signal arrives, by which point $child is set.
@@ -301,7 +307,9 @@ child=0
 on_term() {
   stopped=1
   if [[ $child -gt 0 ]]; then
-    kill -TERM "$child" 2>/dev/null || true
+    # Escalates to SIGKILL after a grace period: FreeRDP acknowledges SIGTERM
+    # and then does not necessarily exit. See rdp_terminate in lib-process.sh.
+    rdp_terminate "$child" "$child_ticks" "$TERM_GRACE" || true
   fi
   if [[ ${watcher:-0} -gt 0 ]]; then
     kill -TERM "$watcher" 2>/dev/null || true
@@ -327,6 +335,10 @@ chmod 600 "$log_file" 2>/dev/null || true
   >/dev/null 2>>"$log_file" &
 child=$!
 unset args
+# Recorded now so the escalation in on_term() can prove the pid it is about to
+# SIGKILL is still FreeRDP. Without this a delayed kill is the same recycled-pid
+# bug that #3 fixed in disconnect, just moved somewhere new.
+child_ticks=$(rdp_start_ticks "$child" 2>/dev/null) || child_ticks=""
 
 # Record that this session's window appeared.
 #
