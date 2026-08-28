@@ -16,6 +16,9 @@
 set -uo pipefail
 
 XFREERDP=/usr/bin/xfreerdp3
+# How long a session gets to shut down cleanly before it is killed outright.
+# See on_term() for why an escalation is needed at all.
+TERM_GRACE=${OMARCHY_RDP_TERM_GRACE:-10}
 JQ=/usr/bin/jq
 HYPRCTL=/usr/bin/hyprctl
 NOTIFY=/usr/bin/omarchy-notification-send
@@ -30,6 +33,8 @@ CONFIG_FILE="$CONFIG_DIR/connections.json"
 . "$SELF_DIR/lib-state-dir.sh"
 # shellcheck source=bin/lib-process.sh
 . "$SELF_DIR/lib-process.sh"
+# shellcheck source=bin/lib-window.sh
+. "$SELF_DIR/lib-window.sh"
 
 GLYPH_OK=$'\U000F08B9'
 GLYPH_FAIL=$'\U000F0159'
@@ -266,6 +271,12 @@ chmod 700 "$STATE_DIR" || die "could not restrict $STATE_DIR to this user"
 rdp_state_dir_ok "$STATE_DIR" || die "refusing to use state directory $STATE_DIR"
 state_file="$STATE_DIR/$id.state"
 log_file="$STATE_DIR/$id.log"
+# Written by the watcher below once this session's window appears. A separate
+# file rather than a field so the watcher never races write_state for the state
+# file; write_state reads it and folds it into the JSON.
+established_file="$STATE_DIR/$id.established"
+rm -f "$established_file"
+trap 'rm -f "$established_file"' EXIT
 started_at=$(printf '%(%s)T' -1)
 
 # Recorded so readers can tell this process from a later one that inherits its
@@ -276,17 +287,24 @@ start_ticks=$(rdp_start_ticks $$) || die "cannot read /proc/$$/stat to identify 
 write_state() {
   local phase=$1 exit_code=${2:-null} message=${3:-}
   local tmp="$state_file.$$"
+  local established=false
+  [[ -e ${established_file:-} ]] && established=true
   "$JQ" -n \
     --arg id "$id" --arg phase "$phase" --arg wmClass "$wm_class" \
     --arg host "$host" --arg message "$message" --arg startTicks "$start_ticks" \
     --argjson pid "$$" --argjson startedAt "$started_at" --argjson exitCode "$exit_code" \
+    --argjson established "$established" \
     '{id: $id, pid: $pid, startTicks: $startTicks, phase: $phase, wmClass: $wmClass,
-      host: $host, startedAt: $startedAt, exitCode: $exitCode, message: $message}' > "$tmp" \
+      host: $host, startedAt: $startedAt, exitCode: $exitCode, established: $established,
+      message: $message}' > "$tmp" \
     && mv -f "$tmp" "$state_file"
 }
 
 stopped=0
 child=0
+# Initialised alongside child so on_term() cannot trip over an unset variable
+# if a signal lands between starting FreeRDP and recording its identity.
+child_ticks=""
 # A TERM aimed at this script (that is how the panel's Disconnect works) has to
 # reach xfreerdp3 too, so the session actually closes. The trap body is
 # evaluated when the signal arrives, by which point $child is set.
@@ -294,7 +312,12 @@ child=0
 on_term() {
   stopped=1
   if [[ $child -gt 0 ]]; then
-    kill -TERM "$child" 2>/dev/null || true
+    # Escalates to SIGKILL after a grace period: FreeRDP acknowledges SIGTERM
+    # and then does not necessarily exit. See rdp_terminate in lib-process.sh.
+    rdp_terminate "$child" "$child_ticks" "$TERM_GRACE" || true
+  fi
+  if [[ ${watcher:-0} -gt 0 ]]; then
+    kill -TERM "$watcher" 2>/dev/null || true
   fi
   return 0
 }
@@ -317,6 +340,38 @@ chmod 600 "$log_file" 2>/dev/null || true
   >/dev/null 2>>"$log_file" &
 child=$!
 unset args
+# Recorded now so the escalation in on_term() can prove the pid it is about to
+# SIGKILL is still FreeRDP. Without this a delayed kill is the same recycled-pid
+# bug that #3 fixed in disconnect, just moved somewhere new.
+child_ticks=$(rdp_start_ticks "$child" 2>/dev/null) || child_ticks=""
+
+# Record that this session's window appeared.
+#
+# FreeRDP maps nothing until the connection actually succeeds, so the window is
+# what separates "the link died" from "we never got in". It has to be watched
+# for while the session is alive: by the time the exit message is written the
+# window is long gone, and the exit code cannot tell the two cases apart. 147
+# is the same code whether the port never spoke RDP or an hour-old session was
+# reset by the peer.
+#
+# Stops as soon as it finds the window, so the usual cost is a couple of polls.
+watch_for_window() {
+  local classes tries=0
+  # Ten minutes at two-second intervals. A session that has not mapped a window
+  # by then is not going to, and there is no point watching for the rest of it.
+  while (( tries < 300 )) && kill -0 "$child" 2>/dev/null; do
+    classes=$(rdp_window_classes) || classes=""
+    if rdp_class_present "$wm_class" "$classes"; then
+      : > "$established_file"
+      return 0
+    fi
+    tries=$((tries + 1))
+    sleep 2
+  done
+}
+watcher=0
+watch_for_window &
+watcher=$!
 
 # `wait` returns early when a trapped signal arrives, with the child still
 # running; the second wait collects its real exit status.
@@ -326,6 +381,13 @@ if (( status > 128 )) && kill -0 "$child" 2>/dev/null; then
   wait "$child"
   status=$?
 fi
+
+if [[ ${watcher:-0} -gt 0 ]]; then
+  kill -TERM "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+fi
+established=0
+[[ -e "$established_file" ]] && established=1
 
 if (( stopped )) || [[ $status -eq 143 || $status -eq 130 ]]; then
   write_state stopped 0 "Disconnected"
@@ -343,34 +405,91 @@ if [[ $status -eq 0 ]]; then
   exit 0
 fi
 
-# Turn the exit code into something a human can act on. The table mirrors
-# Model.js describeExit(); FreeRDP encodes connection errors as
-# 135 + low byte of ERRCONNECT_* (see /usr/include/freerdp3/freerdp/error.h).
+# Turn the exit code into something a human can act on. This table mirrors
+# EXIT_MESSAGES in Model.js, and tests/launcher.test.sh asserts the two agree.
+# Both are transcribed from `enum XF_EXIT_CODE` in FreeRDP's
+# client/X11/xfreerdp.h; codes 1-11 say how a live session ended, and anything
+# from 128 up is xfreerdp never getting a session at all.
 case $status in
-  23)  message="Bad option value (plugin bug — please report)" ;;
-  24)  message="Unknown option (plugin bug — please report)" ;;
+  1)   message="Disconnected" ;;
+  2)   message="Signed out on the remote machine" ;;
+  3)   message="Disconnected after being idle" ;;
+  4)   message="Logon timed out" ;;
+  5)   message="Replaced by another connection" ;;
+  6)   message="The server ran out of memory" ;;
+  7)   message="The server refused the connection" ;;
+  8)   message="The server refused the connection (FIPS policy)" ;;
+  9)   message="Insufficient user privileges" ;;
+  10)  message="Fresh credentials are required" ;;
+  11)  message="Disconnected by the user" ;;
+  128) message="Bad FreeRDP arguments (plugin bug, please report)" ;;
+  129) message="FreeRDP ran out of memory" ;;
+  130) message="Protocol error" ;;
+  131) message="Could not connect to the host" ;;
+  132) message="Authentication failed" ;;
+  133) message="Security negotiation failed" ;;
+  134) message="Logon failure, check the username and domain" ;;
+  135) message="Account locked out" ;;
   136) message="Pre-connect failed" ;;
+  137) message="Connection failed for an unspecified reason" ;;
+  138) message="Post-connect failed" ;;
   139) message="DNS error" ;;
   140) message="Host not found" ;;
-  141) message="Could not connect — host unreachable or RDP not listening" ;;
+  141) message="Could not connect, host unreachable or RDP not listening" ;;
+  142) message="MCS connect failed" ;;
   143) message="TLS handshake failed" ;;
-  144) message="Authentication failed" ;;
-  145) message="Insufficient privileges" ;;
-  146) message="Connection cancelled" ;;
-  147) message="Transport failed — is that port really RDP?" ;;
-  149) message="Password expired" ;;
-  155) message="Logon failure — check username and domain" ;;
-  156) message="Wrong password" ;;
-  157) message="Access denied" ;;
-  159) message="Account locked out" ;;
+  144) message="Insufficient privileges" ;;
+  145) message="Connection cancelled" ;;
+  147) message="Transport failed, is that port really RDP?" ;;
+  148) message="Password expired" ;;
+  149) message="Password must be changed before signing in" ;;
+  150) message="Kerberos KDC unreachable" ;;
+  151) message="Account disabled" ;;
+  152) message="Password expired" ;;
+  153) message="Client revoked" ;;
+  154) message="Wrong password" ;;
+  155) message="Access denied" ;;
+  156) message="Account restriction" ;;
+  157) message="Account expired" ;;
+  158) message="Logon type not granted to this account" ;;
+  159) message="No credentials were supplied" ;;
+  160) message="The remote machine is still booting" ;;
+  161) message="The server requires NLA" ;;
+  255) message="Unknown FreeRDP error" ;;
   *)   if (( status >= 128 )); then message="Connection failed (FreeRDP exit $status)"
        else message="Could not start FreeRDP (exit $status)"; fi ;;
 esac
 
+# The ordinary ways a live session finishes. Mirrors NORMAL_END_CODES in
+# Model.js. Not all of 1-11: a logon timeout or a refused connection ended the
+# session too, but those are failures worth shouting about.
+is_normal_end() {
+  case $1 in
+    1|2|3|5|11) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# A session that was up and then broke did not fail to *connect*, so a
+# connect-time diagnostic is actively misleading: telling someone to check
+# whether the port is really RDP, about a link that worked for an hour, sends
+# them to look at something that was never the problem.
+urgent=1
+if is_normal_end "$status"; then
+  urgent=0
+elif (( established )); then
+  message="Connection lost"
+  urgent=0
+fi
+
 write_state exited "$status" "$message"
 
 if [[ -x "$NOTIFY" ]]; then
-  "$NOTIFY" -g "$GLYPH_FAIL" -u critical "RDP: ${name:-$id}" "$message" || true
+  if (( urgent )); then
+    "$NOTIFY" -g "$GLYPH_FAIL" -u critical "RDP: ${name:-$id}" "$message" || true
+  else
+    "$NOTIFY" -g "$GLYPH_OK" "RDP: ${name:-$id}" "$message" || true
+  fi
 fi
 
 printf 'omarchy-rdp-launch: %s\n' "$message" >&2
