@@ -87,6 +87,8 @@ Panel {
   property string formUser: ""
   property string formPassword: ""
   property string formCert: "tofu"
+  // One of Model.SCALE_VALUES — the only three FreeRDP's /scale: accepts.
+  property string formScale: "100"
   // "auto", one of Model.COMMON_RESOLUTIONS, or "custom". The literal size a
   // custom choice stands for lives in formResolutionCustom.
   property string formDisplayMode: "fixed"
@@ -210,6 +212,7 @@ Panel {
       root.formHost = conn.host
       root.formUser = conn.user
       root.formCert = conn.options.cert
+      root.formScale = conn.options.scale
       root.formDisplayMode = conn.options.displayMode
       root.loadResolution(conn.options.resolution)
       root.formClipboard = conn.options.clipboard
@@ -223,6 +226,7 @@ Panel {
       root.formHost = ""
       root.formUser = ""
       root.formCert = blank.options.cert
+      root.formScale = blank.options.scale
       root.formDisplayMode = blank.options.displayMode
       root.loadResolution(blank.options.resolution)
       root.formClipboard = blank.options.clipboard
@@ -276,7 +280,8 @@ Panel {
         displayMode: root.formDisplayMode,
         resolution: root.currentResolution(),
         clipboard: root.formClipboard,
-        cert: root.formCert
+        cert: root.formCert,
+        scale: root.formScale
       }
     }
   }
@@ -775,6 +780,22 @@ Panel {
               errorText: root.formErrors.resolution || ""
               onEdited: function(t) { root.formResolutionCustom = t }
               onSubmitted: root.saveForm()
+            }
+
+            // FreeRDP's /scale: only accepts these three values (xfreerdp3
+            // --help) — this is DPI scaling of the remote desktop's own UI,
+            // not the window-resize behavior above, and the two combine.
+            Dropdown {
+              width: parent.width
+              label: "Display scale"
+              value: root.formScale
+              fontFamily: root.fontFamily
+              options: [
+                { value: "100", label: "100% — normal" },
+                { value: "140", label: "140% — medium" },
+                { value: "180", label: "180% — large" }
+              ]
+              onChanged: function(v) { root.formScale = v }
             }
 
             OptionToggle {

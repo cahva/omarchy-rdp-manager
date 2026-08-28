@@ -87,9 +87,26 @@ test("uniqueId reads a sequence wrapper of taken ids", function () {
 
 test("normalizeOptions defaults on, and honours an explicit false", function () {
   assert.deepStrictEqual(M.normalizeOptions(undefined),
-    { displayMode: "dynamic", resolution: "auto", clipboard: true, cert: "tofu" })
-  assert.deepStrictEqual(M.normalizeOptions({ clipboard: false, dynamicResolution: false, cert: "ignore" }),
-    { displayMode: "fixed", resolution: "auto", clipboard: false, cert: "ignore" })
+    { displayMode: "dynamic", resolution: "auto", clipboard: true, cert: "tofu", scale: "100" })
+  assert.deepStrictEqual(M.normalizeOptions({ clipboard: false, dynamicResolution: false, cert: "ignore", scale: 180 }),
+    { displayMode: "fixed", resolution: "auto", clipboard: false, cert: "ignore", scale: "180" })
+})
+
+test("normalizeScale accepts only FreeRDP's three /scale: values", function () {
+  assert.strictEqual(M.normalizeScale(undefined), "100")
+  assert.strictEqual(M.normalizeScale(""), "100")
+  assert.strictEqual(M.normalizeScale(140), "140")
+  assert.strictEqual(M.normalizeScale("180"), "180")
+  assert.strictEqual(M.normalizeScale("200"), "100")   // not one of FreeRDP's allowed values
+  assert.strictEqual(M.normalizeScale("nonsense"), "100")
+})
+
+test("buildArgs omits /scale: at 100 (native) and emits it otherwise", function () {
+  var base = M.blankConnection()
+  base.id = "scaletest"; base.host = "h"; base.user = "u"
+  assert.ok(M.buildArgs(base).indexOf("/scale:100") === -1)
+  base.options.scale = "180"
+  assert.ok(M.buildArgs(base).indexOf("/scale:180") !== -1)
 })
 
 // ------------------------------------------------------- display and sizing

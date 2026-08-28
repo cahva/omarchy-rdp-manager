@@ -149,7 +149,8 @@ contains a password** — only a `"secret": "keyring"` marker.
         "displayMode": "fixed",
         "resolution": "auto",
         "clipboard": true,
-        "cert": "tofu"
+        "cert": "tofu",
+        "scale": "100"
       }
     }
   ]
@@ -185,6 +186,12 @@ Edits are picked up live — no reload needed. Notes:
 - `displayMode` replaced an older `dynamicResolution` boolean. Files that still
   have the boolean keep working: `true` reads as `dynamic`, `false` as `fixed`,
   and absent as `dynamic`, which is what the old default did.
+- `scale` is FreeRDP's `/scale:` DPI scaling factor — `100` (normal), `140`
+  (medium), or `180` (large), the only values it accepts. `100` emits no flag;
+  anything else on disk falls back to `100` rather than reaching FreeRDP with a
+  bad value. This is independent of `displayMode`: `displayMode` decides what
+  resizing the *window* does, `scale` decides how large the remote desktop's
+  own UI renders regardless of window size.
 
 Widget preferences live on the widget's entry in `~/.config/omarchy/shell.json`:
 

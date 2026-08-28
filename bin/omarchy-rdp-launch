@@ -88,10 +88,13 @@ port=$(field port 3389)
 user=$(field user)
 domain=$(field domain)
 cert=$(field options.cert tofu)
+scale=$(field options.scale 100)
 
 [[ -n "$host" ]] || die "connection '$id' has no host"
 [[ -n "$user" ]] || die "connection '$id' has no user"
 case "$cert" in tofu|ignore|deny) ;; *) cert=tofu ;; esac
+# FreeRDP's /scale: only accepts these three values (xfreerdp3 --help).
+case "$scale" in 100|140|180) ;; *) scale=100 ;; esac
 
 # ------------------------------------------------------- the argument list
 
@@ -204,6 +207,8 @@ if [[ $(bool_field options.clipboard) == "false" ]]; then
 else
   args+=("+clipboard")
 fi
+# "100" is native size; omit the flag rather than pass a no-op /scale:100.
+[[ "$scale" != "100" ]] && args+=("/scale:$scale")
 # Without a size FreeRDP picks 1024x768, a postage stamp on a modern display.
 # Emitted for every mode: under "dynamic" it is the size the desktop starts at
 # before the first resize. FreeRDP exits 22 if /smart-sizing and

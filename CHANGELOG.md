@@ -5,6 +5,18 @@
      actually shipped rather than guessed when the branch was opened. -->
 ## Unreleased
 
+### Added
+
+- `scale` option: FreeRDP's `/scale:` DPI scaling factor — normal (`100`),
+  medium (`140`), or large (`180`), the only values FreeRDP accepts — now a
+  form field alongside Certificate policy. Normal emits no flag; the launcher
+  and Model.js both fall back to it silently for anything else on disk. This
+  is independent of `displayMode` — that controls what *resizing the window*
+  does, `scale` controls how large the remote desktop's own UI renders.
+- `tests/launcher.test.sh` now asserts the two exit-code tables agree. They are
+  written twice, in `Model.js` and in the launcher, and they had already drifted
+  once, so the duplication gets a test rather than a comment.
+
 ### Fixed
 
 - A session that dropped mid-use was reported as a connect-time problem
@@ -52,12 +64,6 @@
 - `isFailureExit` no longer treats 130 as Ctrl-C. The launcher already records a
   deliberate stop as phase `stopped` with exit 0, so a 130 reaching that
   function could only ever be `XF_EXIT_PROTOCOL`, and the exception hid it.
-
-### Added
-
-- `tests/launcher.test.sh` now asserts the two exit-code tables agree. They are
-  written twice, in `Model.js` and in the launcher, and they had already drifted
-  once, so the duplication gets a test rather than a comment.
 
 ## 0.2.0
 
