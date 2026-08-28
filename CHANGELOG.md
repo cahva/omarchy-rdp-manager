@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.2.1
+<!-- Entries land here as they merge. The release commit renames this heading to
+     the version and bumps manifest.json, so the number is chosen from what
+     actually shipped rather than guessed when the branch was opened. -->
+## Unreleased
 
 ### Fixed
 

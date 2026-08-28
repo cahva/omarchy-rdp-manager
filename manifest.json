@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.cahva.rdp-manager",
   "name": "RDP Manager",
-  "version": "0.2.1",
+  "version": "0.2.0",
   "author": "cahva",
   "license": "MIT",
   "description": "Saved RDP connections in the Omarchy bar. Connect with one click, watch live session state, and keep passwords in the system keyring instead of the process list.",
