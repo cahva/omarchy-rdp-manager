@@ -91,7 +91,13 @@ cat > "$TMP/connections.json" <<'JSON'
       "drives": [], "options": { "displayMode": "fixed", "resolution": "99x99" } },
     { "id": "unicode-resolution", "name": "Unicode resolution", "host": "10.0.0.12", "port": 3389,
       "user": "u", "domain": "",
-      "drives": [], "options": { "displayMode": "fixed", "resolution": "1600 \u00d7 900" } }
+      "drives": [], "options": { "displayMode": "fixed", "resolution": "1600 \u00d7 900" } },
+    { "id": "hidpi", "name": "HiDPI", "host": "10.0.0.13", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "scale": 180 } },
+    { "id": "bad-scale", "name": "Bad scale", "host": "10.0.0.14", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "scale": "250" } }
   ]
 }
 JSON
@@ -114,7 +120,7 @@ launcher_args() {
 
 export ROOT
 
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
   a=$(launcher_args "$id")
   b=$(model_args "$id")
   if [[ "$a" == "$b" ]]; then
@@ -136,7 +142,7 @@ if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got 
 if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
   if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
     ok
   else
@@ -146,7 +152,7 @@ done
 
 # Sizing. FreeRDP exits 22 when /smart-sizing and +dynamic-resolution are both
 # present, so "exactly one of them" is an invariant, not a style preference.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
   a=$(launcher_args "$id")
   n=$(grep -c '^/size:' <<<"$a")
   if [[ "$n" == "1" ]]; then ok; else bad "'$id' must emit exactly one /size:, got $n" "$a"; fi
@@ -173,6 +179,10 @@ if grep -qx -- '/size:2560x1440' <<<"$(launcher_args bad-resolution)"; then ok; 
 if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args baseline)"; then ok; else bad "legacy dynamicResolution:true must still mean dynamic"; fi
 
 # Port, domain and drive fan-out.
+if grep -qx -- '/scale:180' <<<"$(launcher_args hidpi)"; then ok; else bad "explicit scale must be passed to FreeRDP" "$(launcher_args hidpi)"; fi
+if grep -q '^/scale:' <<<"$(launcher_args baseline)"; then bad "native scale (100/unset) must not emit /scale:"; else ok; fi
+if grep -q '^/scale:' <<<"$(launcher_args bad-scale)"; then bad "an out-of-range scale must fall back to native (no /scale:)" "$(launcher_args bad-scale)"; else ok; fi
+
 if grep -qx -- '/v:10.0.0.5' <<<"$(launcher_args baseline)"; then ok; else bad "default port must be omitted"; fi
 if grep -qx -- '/v:rdp.example.com:4489' <<<"$(launcher_args negatives)"; then ok; else bad "custom port must be included"; fi
 if grep -qx -- '/d:CORP' <<<"$(launcher_args negatives)"; then ok; else bad "domain must be passed"; fi
@@ -377,6 +387,90 @@ plant_and_check "$linked" "disconnect followed a symlinked state dir and signall
 # The good case still works: a private directory of our own is accepted.
 out=$(OMARCHY_RDP_STATE_DIR="$private" bin/omarchy-rdp-status 2>/dev/null)
 if [[ "$(jq -r '.error' <<<"$out")" == "" ]]; then ok; else bad "a private state dir was rejected: $out"; fi
+
+# Disconnect used to send one SIGTERM and hope. FreeRDP acknowledges the signal
+# and then does not necessarily exit: its handler cancels a connection attempt,
+# which an established session never checks, so a wedged one ran on while the
+# launcher waited for it forever and Disconnect appeared to do nothing.
+# shellcheck source=bin/lib-process.sh
+. bin/lib-process.sh
+
+stubborn="$TMP/stubborn.sh"
+cat > "$stubborn" <<'STUB'
+#!/usr/bin/env bash
+trap "" TERM
+# Touched only after the trap is installed. Signalling before that point kills
+# the stub by default action and the test proves nothing.
+: > "$1"
+while true; do sleep 0.2; done
+STUB
+chmod +x "$stubborn"
+
+# start_stubborn <ready-file> -- prints the pid once the trap is in place
+start_stubborn() {
+  local ready=$1 pid
+  rm -f "$ready"
+  # Redirected, or the background job holds the write end of the command
+  # substitution's pipe open and $(start_stubborn) never returns.
+  "$stubborn" "$ready" >/dev/null 2>&1 & pid=$!
+  for _ in $(seq 1 40); do
+    [[ -e $ready ]] && break
+    sleep 0.1
+  done
+  printf '%s' "$pid"
+}
+
+stubborn_pid=$(start_stubborn "$TMP/ready1")
+stubborn_ticks=$(rdp_start_ticks "$stubborn_pid")
+rdp_terminate "$stubborn_pid" "$stubborn_ticks" 1 >/dev/null 2>&1
+sleep 0.5
+if kill -0 "$stubborn_pid" 2>/dev/null; then ok; else bad "the stub should survive SIGTERM, so the escalation has something to prove"; fi
+sleep 2
+if kill -0 "$stubborn_pid" 2>/dev/null; then
+  bad "rdp_terminate did not escalate to SIGKILL"
+  kill -KILL "$stubborn_pid" 2>/dev/null
+else
+  ok
+fi
+
+# The delayed kill can land after the caller has gone and the pid been recycled.
+# Signalling on a bare pid is the bug the start-time check exists to prevent.
+victim_pid=$(start_stubborn "$TMP/ready2")
+victim_ticks=$(rdp_start_ticks "$victim_pid")
+if rdp_same_process "$victim_pid" "$((victim_ticks + 1))"; then
+  bad "a mismatched start time was accepted; a recycled pid could be killed"
+else
+  ok
+fi
+if rdp_same_process "$victim_pid" ""; then
+  bad "an empty start time was accepted"
+else
+  ok
+fi
+kill -KILL "$victim_pid" 2>/dev/null
+wait "$victim_pid" 2>/dev/null
+
+# The exit-code table is written twice: as EXIT_MESSAGES in Model.js and as the
+# case statement in the launcher. Every entry above 143 was wrong once already,
+# because both were derived from "135 + low byte of ERRCONNECT_*" and the real
+# enum has a gap at 146. Duplication that has already drifted gets a test.
+launcher_table=$(sed -nE 's/^  ([0-9]+)\)[[:space:]]+message="(.*)" ;;$/\1\t\2/p' bin/omarchy-rdp-launch)
+model_table=$(ROOT=$PWD node -e '
+  var M = require(process.env.ROOT + "/Model.js")
+  Object.keys(M.EXIT_MESSAGES).map(Number).sort(function (a, b) { return a - b })
+    .forEach(function (k) {
+      // 0 is handled before the case statement in the launcher, so it is not
+      // part of the table being compared.
+      if (k !== 0) console.log(k + "\t" + M.EXIT_MESSAGES[k])
+    })
+')
+if [[ -z "$launcher_table" ]]; then
+  bad "could not read the launcher exit table; has its formatting changed?"
+elif [[ "$launcher_table" == "$model_table" ]]; then
+  ok
+else
+  bad "the exit-code tables disagree" "$(diff <(printf '%s\n' "$launcher_table") <(printf '%s\n' "$model_table"))"
+fi
 
 printf 'launcher.test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

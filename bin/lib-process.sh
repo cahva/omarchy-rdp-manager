@@ -41,3 +41,29 @@ rdp_same_process() {
   actual=$(rdp_start_ticks "$pid") || return 1
   [[ $actual == "$expected" ]]
 }
+
+# Ask a process to stop, and make sure it actually does.
+#
+# FreeRDP does not reliably exit on SIGTERM. Its handler calls
+# freerdp_abort_connect_context, which cancels a connection *attempt*; an
+# established session never checks that flag, and one blocked on a wedged
+# socket never will. Observed in the wild: 836KB unread and 1.1MB unsent on an
+# ESTABLISHED socket, the signal acknowledged in FreeRDP's log, and the process
+# still running twenty minutes later. Disconnect looked like it did nothing.
+#
+# Returns as soon as the TERM is sent; the escalation runs in the background so
+# a caller waiting on the process is not blocked by it.
+rdp_terminate() {
+  local pid=$1 ticks=${2-} grace=${3:-10}
+  [[ $pid =~ ^[0-9]+$ ]] && (( pid > 0 )) || return 1
+  kill -TERM "$pid" 2>/dev/null || return 1
+  # The delayed kill can land after the caller has exited and the pid has been
+  # recycled, so it fires only when the start time still matches. With no
+  # recorded start time there is nothing to check against, and sending SIGKILL
+  # on a bare pid is the exact bug the start-time check exists to prevent, so
+  # the escalation is skipped rather than guessed at.
+  ( sleep "$grace"
+    rdp_same_process "$pid" "$ticks" && kill -KILL "$pid" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  return 0
+}

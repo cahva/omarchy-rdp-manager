@@ -87,9 +87,26 @@ test("uniqueId reads a sequence wrapper of taken ids", function () {
 
 test("normalizeOptions defaults on, and honours an explicit false", function () {
   assert.deepStrictEqual(M.normalizeOptions(undefined),
-    { displayMode: "dynamic", resolution: "auto", clipboard: true, cert: "tofu" })
-  assert.deepStrictEqual(M.normalizeOptions({ clipboard: false, dynamicResolution: false, cert: "ignore" }),
-    { displayMode: "fixed", resolution: "auto", clipboard: false, cert: "ignore" })
+    { displayMode: "dynamic", resolution: "auto", clipboard: true, cert: "tofu", scale: "100" })
+  assert.deepStrictEqual(M.normalizeOptions({ clipboard: false, dynamicResolution: false, cert: "ignore", scale: 180 }),
+    { displayMode: "fixed", resolution: "auto", clipboard: false, cert: "ignore", scale: "180" })
+})
+
+test("normalizeScale accepts only FreeRDP's three /scale: values", function () {
+  assert.strictEqual(M.normalizeScale(undefined), "100")
+  assert.strictEqual(M.normalizeScale(""), "100")
+  assert.strictEqual(M.normalizeScale(140), "140")
+  assert.strictEqual(M.normalizeScale("180"), "180")
+  assert.strictEqual(M.normalizeScale("200"), "100")   // not one of FreeRDP's allowed values
+  assert.strictEqual(M.normalizeScale("nonsense"), "100")
+})
+
+test("buildArgs omits /scale: at 100 (native) and emits it otherwise", function () {
+  var base = M.blankConnection()
+  base.id = "scaletest"; base.host = "h"; base.user = "u"
+  assert.ok(M.buildArgs(base).indexOf("/scale:100") === -1)
+  base.options.scale = "180"
+  assert.ok(M.buildArgs(base).indexOf("/scale:180") !== -1)
 })
 
 // ------------------------------------------------------- display and sizing
@@ -458,25 +475,108 @@ test("previewArgs redacts the password line and adds exactly one", function () {
 
 // ------------------------------------------------------------------ exit codes
 
-test("describeExit explains the codes measured against FreeRDP 3.30", function () {
+test("describeExit matches FreeRDP's own enum", function () {
+  // This test used to claim these were "measured against FreeRDP 3.30". They
+  // were not: they came from a formula, and it put "Wrong password" on 156,
+  // which is really ACCOUNT_RESTRICTION. Checked against enum XF_EXIT_CODE in
+  // client/X11/xfreerdp.h at tag 3.30.0, the version developed against.
   assert.strictEqual(M.describeExit(0), "Session ended")
   assert.strictEqual(M.describeExit(140), "Host not found")
-  assert.strictEqual(M.describeExit(156), "Wrong password")
-  assert.ok(/Bad option value/.test(M.describeExit(23)))
+  assert.strictEqual(M.describeExit(154), "Wrong password")
+  assert.strictEqual(M.describeExit(156), "Account restriction")
 })
 
-test("describeExit falls back sensibly on both sides of 128", function () {
+test("describeExit names the range when a code has no entry", function () {
   assert.ok(/Connection failed/.test(M.describeExit(199)))
-  assert.ok(/Could not start FreeRDP/.test(M.describeExit(5)))
+  assert.ok(/RDP protocol error/.test(M.describeExit(99)))
+  assert.ok(/Could not start FreeRDP/.test(M.describeExit(22)))
+  // 5 is a real mapping now, not a fallback.
+  assert.strictEqual(M.describeExit(5), "Replaced by another connection")
   assert.strictEqual(M.describeExit(undefined), "Session ended")
   assert.strictEqual(M.describeExit("nonsense"), "Session ended")
 })
 
-test("isFailureExit does not paint a clean end or a Ctrl-C as a failure", function () {
+test("isFailureExit separates ordinary endings from real failures", function () {
   assert.strictEqual(M.isFailureExit(0), false)
-  assert.strictEqual(M.isFailureExit(130), false)
   assert.strictEqual(M.isFailureExit(null), false)
+  // The ordinary ways a live session finishes.
+  ;[1, 2, 3, 5, 11].forEach(function (c) {
+    assert.strictEqual(M.isFailureExit(c), false, "code " + c + " should not be a failure")
+  })
+  // Session-end codes that are still failures: a logon timeout or a refused
+  // connection ended the session too, but the user has something to fix.
+  ;[4, 6, 7, 8, 9, 10].forEach(function (c) {
+    assert.strictEqual(M.isFailureExit(c), true, "code " + c + " should be a failure")
+  })
   assert.strictEqual(M.isFailureExit(141), true)
+  // 130 was excluded here as SIGINT, on the shell's 128+signal convention. The
+  // launcher records a deliberate stop as phase "stopped" with exit 0, so a 130
+  // arriving here can only be XF_EXIT_PROTOCOL, and the exception hid it.
+  assert.strictEqual(M.isFailureExit(130), true)
+})
+
+test("the exit table matches FreeRDP's enum where it used to be wrong", function () {
+  // Transcribed from enum XF_EXIT_CODE. The old table was derived from
+  // "135 + low byte of ERRCONNECT_*", which holds to 143 and then breaks,
+  // because the enum has a gap at 146. These are the codes it got wrong.
+  assert.strictEqual(M.EXIT_MESSAGES[132], "Authentication failed")
+  assert.strictEqual(M.EXIT_MESSAGES[144], "Insufficient privileges")
+  assert.strictEqual(M.EXIT_MESSAGES[145], "Connection cancelled")
+  assert.strictEqual(M.EXIT_MESSAGES[154], "Wrong password")
+  assert.strictEqual(M.EXIT_MESSAGES[155], "Access denied")
+  // 146 is not an exit code FreeRDP can produce; the old table gave it a
+  // meaning that belonged to 145.
+  assert.strictEqual(M.EXIT_MESSAGES[146], undefined)
+  // Still correct, and the case that started all of this.
+  assert.strictEqual(M.EXIT_MESSAGES[147], "Transport failed, is that port really RDP?")
+})
+
+test("a dropped session is not reported as a connect-time failure", function () {
+  // The bug this fixes: an hour-old session was reset by the peer, FreeRDP
+  // exited 147, and the panel told the user to check whether the port was
+  // really RDP. Same code, opposite meaning, decided by whether a window ever
+  // appeared.
+  var dropped = { id: "a", phase: "exited", exitCode: 147, established: true }
+  var never = { id: "a", phase: "exited", exitCode: 147, established: false }
+
+  assert.strictEqual(M.isDroppedSession(dropped), true)
+  assert.strictEqual(M.isDroppedSession(never), false)
+
+  assert.strictEqual(M.describeEnd(dropped), "Connection lost")
+  assert.strictEqual(M.describeEnd(never), "Transport failed, is that port really RDP?")
+
+  // A drop is information, not something to paint red.
+  assert.strictEqual(M.rowStatus(dropped, 0).tone, "dim")
+  assert.strictEqual(M.rowStatus(never, 0).tone, "urgent")
+
+  // Nor should it tint the bar icon, which means "go and fix this".
+  assert.strictEqual(M.summarize([dropped]).state, "idle")
+  assert.strictEqual(M.summarize([never]).state, "failed")
+})
+
+test("the launcher's own message wins over the generic one", function () {
+  // The launcher knew whether the session had established, so what it wrote is
+  // better than anything reconstructed from the code alone.
+  var s = { id: "a", phase: "exited", exitCode: 147, established: true, message: "Connection lost" }
+  assert.strictEqual(M.describeEnd(s), "Connection lost")
+})
+
+test("normalizeSession defaults established to false", function () {
+  // State files written before this field existed must not read as established,
+  // or every old failure would be relabelled a drop.
+  assert.strictEqual(M.normalizeSession({ id: "a" }).established, false)
+  assert.strictEqual(M.normalizeSession({ id: "a", established: "yes" }).established, false)
+  assert.strictEqual(M.normalizeSession({ id: "a", established: true }).established, true)
+})
+
+test("an ordinary session ending keeps its specific reason", function () {
+  ;[[2, "Signed out on the remote machine"], [3, "Disconnected after being idle"],
+    [5, "Replaced by another connection"]].forEach(function (pair) {
+    var s = { id: "a", phase: "exited", exitCode: pair[0], established: true }
+    var row = M.rowStatus(s, 0)
+    assert.strictEqual(row.label, pair[1], "code " + pair[0])
+    assert.strictEqual(row.tone, "dim", "code " + pair[0])
+  })
 })
 
 // --------------------------------------------------------------- status parsing

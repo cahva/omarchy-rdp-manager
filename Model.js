@@ -79,6 +79,11 @@ function uniqueId(name, takenIds) {
 var DEFAULT_PORT = 3389
 var CERT_POLICIES = ["tofu", "ignore", "deny"]
 
+// FreeRDP's /scale: accepts exactly these three values (see `xfreerdp3 --help`).
+// "100" is native size and is treated as "off" — buildArgs omits the flag
+// entirely rather than emit a no-op /scale:100.
+var SCALE_VALUES = ["100", "140", "180"]
+
 // ------------------------------------------------------- display and sizing
 
 // How the remote desktop relates to the client window.
@@ -195,6 +200,13 @@ function normalizeDrives(drives) {
   return out
 }
 
+// Coerces to a string first: a hand-edited file might have 140 as a JSON
+// number rather than "140", and SCALE_VALUES compares strings.
+function normalizeScale(scale) {
+  var s = trim(String(scale == null ? "" : scale))
+  return SCALE_VALUES.indexOf(s) === -1 ? "100" : s
+}
+
 function normalizeOptions(options) {
   var o = options && typeof options === "object" ? options : {}
   var cert = trim(o.cert).toLowerCase()
@@ -202,7 +214,8 @@ function normalizeOptions(options) {
     displayMode: normalizeDisplayMode(o),
     resolution: normalizeResolution(o.resolution),
     clipboard: o.clipboard !== false,
-    cert: CERT_POLICIES.indexOf(cert) === -1 ? "tofu" : cert
+    cert: CERT_POLICIES.indexOf(cert) === -1 ? "tofu" : cert,
+    scale: normalizeScale(o.scale)
   }
 }
 
@@ -387,6 +400,8 @@ function buildArgs(conn, autoSize) {
   // negative one. Emitting +clipboard as well keeps the intent readable in a
   // dry run and matches what a user would type by hand.
   args.push(c.options.clipboard ? "+clipboard" : "-clipboard")
+  // "100" is native size; omit the flag rather than pass a no-op /scale:100.
+  if (c.options.scale !== "100") args.push("/scale:" + c.options.scale)
 
   // Without a size FreeRDP picks 1024x768, which is a postage stamp on a
   // modern display. The size is emitted for every mode: under "dynamic" it is
@@ -422,46 +437,136 @@ function previewCommand(conn, autoSize) {
 
 // ---------------------------------------------------------------- exit codes
 
-// FreeRDP 3 reports connection failures as `135 + low byte of ERRCONNECT_*`
-// (see /usr/include/freerdp3/freerdp/error.h). 0 is a clean session end and
-// 1..127 is a usage problem. There is no EXIT STATUS section in the manpage,
-// so this table is the practical substitute.
+// Transcribed from `enum XF_EXIT_CODE` in FreeRDP's client/X11/xfreerdp.h,
+// which is the authority: there is no EXIT STATUS section in the manpage.
+//
+// An earlier version of this table said the codes were `135 + low byte of
+// ERRCONNECT_*`. They are not. The enum is bespoke and has a gap at 146, so
+// that formula was right up to 143 and silently wrong above it, which put the
+// wrong message on eight codes. Verified against the real enum, and spot
+// checked against a live FreeRDP: 0x01 PRE_CONNECT_FAILED does exit 136, and
+// 0x0D CONNECT_TRANSPORT_FAILED exits 147 rather than the 148 the formula
+// predicts.
+//
+// The ranges, per the enum's own comments:
+//   0-15     protocol-independent, mostly how a *live* session ended
+//   16-31    licensing
+//   32-127   RDP protocol errors
+//   128-254  xfreerdp's own, nearly all connection-time
 var EXIT_MESSAGES = {
   0: "Session ended",
-  23: "Bad option value (plugin bug — please report)",
-  24: "Unknown option (plugin bug — please report)",
+
+  // These describe a session that was up and then stopped. Several are not
+  // failures at all, which is what isFailureExit() below keys on.
+  1: "Disconnected",
+  2: "Signed out on the remote machine",
+  3: "Disconnected after being idle",
+  4: "Logon timed out",
+  5: "Replaced by another connection",
+  6: "The server ran out of memory",
+  7: "The server refused the connection",
+  8: "The server refused the connection (FIPS policy)",
+  9: "Insufficient user privileges",
+  10: "Fresh credentials are required",
+  11: "Disconnected by the user",
+
+  128: "Bad FreeRDP arguments (plugin bug, please report)",
+  129: "FreeRDP ran out of memory",
+  130: "Protocol error",
+  131: "Could not connect to the host",
+  132: "Authentication failed",
+  133: "Security negotiation failed",
+  134: "Logon failure, check the username and domain",
+  135: "Account locked out",
   136: "Pre-connect failed",
+  137: "Connection failed for an unspecified reason",
+  138: "Post-connect failed",
   139: "DNS error",
   140: "Host not found",
-  141: "Could not connect — host unreachable or RDP not listening",
+  141: "Could not connect, host unreachable or RDP not listening",
+  142: "MCS connect failed",
   143: "TLS handshake failed",
-  144: "Authentication failed",
-  145: "Insufficient privileges",
-  146: "Connection cancelled",
-  147: "Transport failed — is that port really RDP?",
-  149: "Password expired",
-  155: "Logon failure — check username and domain",
-  156: "Wrong password",
-  157: "Access denied",
-  159: "Account locked out"
+  144: "Insufficient privileges",
+  145: "Connection cancelled",
+  // 146 is deliberately absent: the enum skips it.
+  147: "Transport failed, is that port really RDP?",
+  148: "Password expired",
+  149: "Password must be changed before signing in",
+  150: "Kerberos KDC unreachable",
+  151: "Account disabled",
+  152: "Password expired",
+  153: "Client revoked",
+  154: "Wrong password",
+  155: "Access denied",
+  156: "Account restriction",
+  157: "Account expired",
+  158: "Logon type not granted to this account",
+  159: "No credentials were supplied",
+  160: "The remote machine is still booting",
+  161: "The server requires NLA",
+  255: "Unknown FreeRDP error"
 }
+
+// Codes 1-11 report how a live session ended. Anything at 128 or above is
+// xfreerdp failing to get a session at all.
+function isSessionEndCode(code) {
+  var n = Number(code)
+  return isFinite(n) && n >= 1 && n <= 11
+}
+
+// The subset of those that are an ordinary way for a session to finish, rather
+// than something the user has to go and fix. Deliberately not all of 1-11:
+// a logon timeout (4) or a server refusal (7) ended the session too, but they
+// are failures. In order: disconnect, remote logoff, idle timeout, replaced by
+// another connection, disconnected by the user.
+var NORMAL_END_CODES = [1, 2, 3, 5, 11]
 
 function describeExit(code) {
   var n = Number(code)
   if (!isFinite(n)) return "Session ended"
   if (EXIT_MESSAGES[n]) return EXIT_MESSAGES[n]
+  // Unmapped codes still fall in a range with a known meaning, so say which
+  // rather than using one message for all of them.
   if (n >= 128) return "Connection failed (FreeRDP exit " + n + ")"
-  return "Could not start FreeRDP (exit " + n + ")"
+  if (n >= 32) return "RDP protocol error (FreeRDP exit " + n + ")"
+  // 16-31 is the licensing set, but FreeRDP also returns codes in this range
+  // when it rejects its own command line: an argument mistake here exits 22.
+  // Both mean no session, so the wording covers them without picking one.
+  if (n >= 16) return "Could not start FreeRDP (exit " + n + ")"
+  return "Session ended (FreeRDP exit " + n + ")"
 }
 
-// A clean end and a deliberate disconnect are not errors worth painting red.
-// 130 = SIGINT, 143 = SIGTERM would collide with TLS_CONNECT_FAILED, so the
-// launcher records deliberate stops as phase "stopped" instead of relying on
-// the code alone.
+// Whether an exit code is worth painting red and raising a notification for.
+//
+// 130 used to be excluded here as SIGINT, on the shell's 128+signal
+// convention. It is not any more: the launcher already records a deliberate
+// stop as phase "stopped" with exit 0, so by the time a code reaches this
+// function a 130 can only be XF_EXIT_PROTOCOL, a real failure. The same
+// applies to 143, which collides with TLS_CONNECT_FAILED. Leaving those
+// exceptions in only ever hid genuine errors.
 function isFailureExit(code) {
   var n = Number(code)
   if (!isFinite(n)) return false
-  return n !== 0 && n !== 130
+  if (n === 0) return false
+  return NORMAL_END_CODES.indexOf(n) === -1
+}
+
+// A session that was up and then ended badly is a different event from one
+// that never connected, even though FreeRDP reports both with the same code.
+// 147 is the case that prompted this: at connect time it genuinely does suggest
+// the port is not RDP, and mid-session it only means the link died.
+function isDroppedSession(session) {
+  var s = normalizeSession(session)
+  return s.established && isFailureExit(s.exitCode) && !isSessionEndCode(s.exitCode)
+}
+
+// What to show for a finished session. The launcher's own message wins when it
+// set one, because it knew whether the session had established.
+function describeEnd(session) {
+  var s = normalizeSession(session)
+  if (s.message) return s.message
+  if (isDroppedSession(s)) return "Connection lost"
+  return describeExit(s.exitCode)
 }
 
 // -------------------------------------------------------------- session view
@@ -477,6 +582,10 @@ function normalizeSession(session) {
     phase: phase,
     startedAt: Number(s.startedAt) || 0,
     exitCode: exitCode === null || !isFinite(exitCode) ? null : exitCode,
+    // Whether this session ever had a window. FreeRDP maps nothing until the
+    // connection succeeds, so this is what separates "the link died" from
+    // "we never got in", which the exit code alone cannot say.
+    established: s.established === true,
     message: trim(s.message)
   }
 }
@@ -533,7 +642,10 @@ function summarize(sessions) {
     var s = normalizeSession(list[i])
     if (s.phase === "connected") connected++
     else if (s.phase === "connecting") connecting++
-    else if (s.phase === "exited" && isFailureExit(s.exitCode)) failed++
+    // A dropped session is deliberately not counted. The icon's failed tint
+    // says "this is misconfigured, go and fix it", which is wrong for a link
+    // that died; the desktop notification is what reports that.
+    else if (s.phase === "exited" && isFailureExit(s.exitCode) && !isDroppedSession(s)) failed++
   }
   var state = "idle"
   if (connected > 0) state = "connected"
@@ -599,9 +711,17 @@ function rowStatus(session, nowSeconds) {
     return { label: "Connected" + age, tone: "active" }
   }
   if (s.phase === "stopped") return { label: "Disconnected", tone: "dim" }
+  // A drop gets the same neutral tone as a deliberate disconnect. It is worth
+  // reporting, not worth painting as something the user broke.
+  if (isDroppedSession(s)) return { label: describeEnd(s), tone: "dim" }
   if (isFailureExit(s.exitCode)) {
-    return { label: s.message || describeExit(s.exitCode), tone: "urgent" }
+    return { label: describeEnd(s), tone: "urgent" }
   }
+  // Checked after the failure case on purpose: 4 and 7 are session-end codes
+  // too, but a logon timeout or a refused connection is a failure. What is
+  // left here is the ordinary endings, which are worth naming. "Signed out on
+  // the remote machine" tells the user more than a flat "Not connected".
+  if (isSessionEndCode(s.exitCode)) return { label: describeEnd(s), tone: "dim" }
   return { label: "Not connected", tone: "dim" }
 }
 
@@ -688,20 +808,22 @@ function blankConnection() {
     domain: "",
     secret: "keyring",
     drives: [],
-    options: { displayMode: "fixed", resolution: "auto", clipboard: true, cert: "tofu" }
+    options: { displayMode: "fixed", resolution: "auto", clipboard: true, cert: "tofu", scale: "100" }
   }
 }
 
 if (typeof module !== "undefined") module.exports = {
   asList, slugify, isValidId, uniqueId,
-  normalizeDrive, normalizeDrives, normalizeOptions, normalizePort, splitHostPort, normalizeConnection,
+  normalizeDrive, normalizeDrives, normalizeOptions, normalizeScale, normalizePort,
+  splitHostPort, normalizeConnection,
   parseConfig, serializeConfig, validateConnection,
   wmClassFor, buildArgs, previewArgs, previewCommand,
-  describeExit, isFailureExit, EXIT_MESSAGES,
+  describeExit, describeEnd, isFailureExit, isSessionEndCode, isDroppedSession,
+  EXIT_MESSAGES, NORMAL_END_CODES,
   normalizeSession, parseStatus, sessionMap, isLive, summarize, pollInterval,
   formatDuration, endpointFor, formatHostPort, driveSummary, rowStatus, tooltipFor, heroMeta,
   upsertConnection, removeConnection, findConnection, blankConnection,
   autoResolution, parseResolution, normalizeResolution, normalizeDisplayMode, resolveResolution,
-  DEFAULT_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS,
+  DEFAULT_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS, SCALE_VALUES,
   AUTO_MAX_WIDTH, AUTO_MAX_HEIGHT
 }
