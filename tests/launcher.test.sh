@@ -398,12 +398,12 @@ chmod +x "$stubborn"
 
 # start_stubborn <ready-file> -- prints the pid once the trap is in place
 start_stubborn() {
-  local ready=$1 pid i
+  local ready=$1 pid
   rm -f "$ready"
   # Redirected, or the background job holds the write end of the command
   # substitution's pipe open and $(start_stubborn) never returns.
   "$stubborn" "$ready" >/dev/null 2>&1 & pid=$!
-  for i in $(seq 1 40); do
+  for _ in $(seq 1 40); do
     [[ -e $ready ]] && break
     sleep 0.1
   done
