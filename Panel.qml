@@ -154,6 +154,12 @@ Panel {
     else svc.connect(id, { notify: root.notifyOnDisconnect })
   }
 
+  // Keys that reach here are whatever Omarchy's shared PanelKeyCatcher did not
+  // claim first. It reserves j/k/l/h for movement, Enter and Space for
+  // activation, Esc, Tab, and *x and X for delete*, which it turns into
+  // deleteRequested() before textKey() is ever called. Disconnect was bound to
+  // "x" and could therefore never fire (#11). Anything bound here must avoid
+  // that set, so disconnect is "s" for stop.
   function onTextKey(t) {
     if (root.view !== "list") return
     var key = String(t).toLowerCase()
@@ -163,7 +169,7 @@ Panel {
     if (key === "e") root.openForm(conn)
     else if (key === "d") root.confirmDeleteId = conn.id
     else if (key === "t" && svc) svc.testConnection(conn.id)
-    else if (key === "x" && svc) svc.disconnect(conn.id)
+    else if (key === "s" && svc) svc.disconnect(conn.id)
     else if (key === "c" && svc) svc.connect(conn.id, { notify: root.notifyOnDisconnect })
   }
 
@@ -577,7 +583,7 @@ Panel {
             Text {
               visible: root.rowCount() > 0
               width: parent.width
-              text: "enter connect / focus · c connect · x disconnect · e edit · t test · d delete · n new"
+              text: "enter connect / focus · c connect · s disconnect · e edit · t test · d delete · n new"
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption

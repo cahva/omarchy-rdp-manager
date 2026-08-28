@@ -266,5 +266,72 @@ test("no term from the local private denylist appears in the repo", function () 
   })
 })
 
+
+// ------------------------------------------------------------------ key bindings
+
+// Omarchy's shared PanelKeyCatcher consumes these before a panel's own
+// onTextKey ever runs, so binding one of them is dead code. Taken from
+// /usr/share/omarchy/shell/Ui/PanelKeyCatcher.qml, which is not available on a
+// CI runner, hence the copy. Disconnect was bound to "x" and silently did
+// nothing for every user (#11).
+var CATCHER_RESERVED = ["j", "k", "l", "h", "x"]
+
+function panelSource() {
+  return fs.readFileSync(path.join(root, "Panel.qml"), "utf8")
+}
+
+// The single-character keys Panel.qml binds in its onTextKey handler.
+function boundKeys(src) {
+  var body = src.slice(src.indexOf("function onTextKey"))
+  body = body.slice(0, body.indexOf("\n  }"))
+  var keys = []
+  var re = /key === "([a-z])"/g
+  var m
+  while ((m = re.exec(body)) !== null) keys.push(m[1])
+  return keys
+}
+
+test("no key binding collides with the shared PanelKeyCatcher", function () {
+  var keys = boundKeys(panelSource())
+  assert.ok(keys.length >= 5, "expected to find the onTextKey bindings, found " + keys.join(","))
+  keys.forEach(function (k) {
+    assert.strictEqual(CATCHER_RESERVED.indexOf(k), -1,
+      "'" + k + "' is consumed by PanelKeyCatcher before onTextKey runs, so this binding can never fire")
+  })
+})
+
+test("the help footer lists exactly the keys that are bound", function () {
+  // The footer said "x disconnect" for a binding that could not fire. Docs and
+  // code drifting apart is how #11 stayed invisible.
+  var src = panelSource()
+  var footer = /text: "enter connect \/ focus · ([^"]+)"/.exec(src)
+  assert.ok(footer, "could not find the help footer in Panel.qml")
+  var listed = []
+  footer[1].split("·").forEach(function (part) {
+    var m = /^\s*([a-z])\s+\S/.exec(part)
+    if (m) listed.push(m[1])
+  })
+  var bound = boundKeys(src)
+  bound.forEach(function (k) {
+    assert.ok(listed.indexOf(k) !== -1, "key '" + k + "' is bound but missing from the help footer")
+  })
+  listed.forEach(function (k) {
+    assert.ok(bound.indexOf(k) !== -1, "the help footer advertises '" + k + "' but nothing binds it")
+  })
+})
+
+test("the README key table matches the bindings", function () {
+  var readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
+  var bound = boundKeys(panelSource())
+  bound.forEach(function (k) {
+    assert.ok(new RegExp("`" + k + "`").test(readme),
+      "key '" + k + "' is bound but never mentioned in README.md")
+  })
+  CATCHER_RESERVED.forEach(function (k) {
+    assert.ok(!new RegExp("\\| `c` / `" + k + "`").test(readme),
+      "README.md still documents '" + k + "' as a plugin binding, but the catcher owns it")
+  })
+})
+
 console.log("manifest.test.js: " + passed + " passed" +
   (process.exitCode ? " (with failures above)" : ""))
