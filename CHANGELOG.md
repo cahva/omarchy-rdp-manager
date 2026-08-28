@@ -1,5 +1,64 @@
 # Changelog
 
+<!-- Entries land here as they merge. The release commit renames this heading to
+     the version and bumps manifest.json, so the number is chosen from what
+     actually shipped rather than guessed when the branch was opened. -->
+## Unreleased
+
+### Fixed
+
+- A session that dropped mid-use was reported as a connect-time problem
+  ([#7](https://github.com/cahva/omarchy-rdp-manager/issues/7)). A session that
+  had been up for nearly two hours was reset by the server, FreeRDP exited 147,
+  and the panel said "Transport failed, is that port really RDP?" in red with a
+  critical notification. The port had been right all along. Exit 147 covers both
+  "the socket opened but nothing there speaks RDP" and "an established link
+  died", and nothing distinguished them.
+- Sessions now record whether their window ever appeared. FreeRDP maps nothing
+  until the connection succeeds, so that is the signal, and it has to be watched
+  for while the session is alive: by the time the exit message is written the
+  window is gone. A session that established and then failed now reads
+  "Connection lost", in the same neutral tone as a deliberate disconnect, and no
+  longer tints the bar icon or raises a critical notification. A link that dies
+  is worth reporting, not worth painting as something you misconfigured.
+- **Eight of the fourteen exit-code messages named the wrong thing.** Both
+  tables were derived from "FreeRDP reports failures as `135 + low byte of
+  ERRCONNECT_*`". That holds up to 143 and then breaks, because the real
+  `enum XF_EXIT_CODE` is bespoke and skips 146. So 144 said "Authentication
+  failed" when it means insufficient privileges, 156 said "Wrong password" when
+  it means an account restriction, and 159 said "Account locked out" when it
+  means no credentials were supplied. The table is now transcribed from the enum
+  at FreeRDP 3.30.0.
+- Codes 1 to 11 were not mapped at all, and they are the ones that describe how
+  a *live* session ended: a remote sign-out, an idle timeout, being replaced by
+  another connection. Those showed as "Could not start FreeRDP (exit 2)". They
+  are named now, and the ones that are ordinary endings no longer count as
+  failures.
+- Disconnect could leave a session running with its window still on screen.
+  It sent a single `SIGTERM` and assumed that was the end of it. FreeRDP's
+  handler calls `freerdp_abort_connect_context`, which cancels a connection
+  *attempt*; an established session never checks that flag, and one blocked on a
+  wedged socket never will. Caught live with 836KB unread and 1.1MB unsent on an
+  `ESTABLISHED` socket, the signal acknowledged in FreeRDP's log, and the process
+  still running twenty minutes later while the launcher waited on it. The button
+  looked like it did nothing. Termination now escalates to `SIGKILL` after a
+  grace period, ten seconds by default and settable with
+  `OMARCHY_RDP_TERM_GRACE`.
+- The escalation verifies the process start time before it fires. By the time
+  the grace period is up the launcher may have exited and the pid been reused,
+  and a delayed `SIGKILL` on a bare pid is the same bug
+  [#3](https://github.com/cahva/omarchy-rdp-manager/issues/3) fixed in
+  disconnect. Both the escalation and the refusal are covered by tests.
+- `isFailureExit` no longer treats 130 as Ctrl-C. The launcher already records a
+  deliberate stop as phase `stopped` with exit 0, so a 130 reaching that
+  function could only ever be `XF_EXIT_PROTOCOL`, and the exception hid it.
+
+### Added
+
+- `tests/launcher.test.sh` now asserts the two exit-code tables agree. They are
+  written twice, in `Model.js` and in the launcher, and they had already drifted
+  once, so the duplication gets a test rather than a comment.
+
 ## 0.2.0
 
 ### Added
