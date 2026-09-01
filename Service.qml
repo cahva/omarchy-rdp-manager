@@ -184,6 +184,11 @@ Item {
     secretStoreProc.command = [service.secretScript, "store", String(id),
                                String(label || ("Omarchy RDP: " + id))]
     secretStoreProc.launched = false
+    // onStarted's write() is a no-op once stdinEnabled has been flipped false
+    // by a previous run, and it is never flipped back — so every save after
+    // the first silently sent no password down the pipe, leaving secret-tool
+    // blocked reading from an open-but-silent stdin until the 20s timeout.
+    secretStoreProc.stdinEnabled = true
     secretStoreProc.running = true
   }
 
