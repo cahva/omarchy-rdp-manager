@@ -301,6 +301,7 @@ Panel {
 
   function saveForm() {
     if (!svc) return
+    root.formNotice = ""
     var conn = root.formConnection()
     if (!conn.id) {
       root.formErrors = { name: "Give the connection a name" }
