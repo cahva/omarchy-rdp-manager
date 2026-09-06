@@ -258,26 +258,38 @@ fi
 
 # ------------------------------------------------------------------ state file
 
-STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
-# `mkdir -p -m` would set the mode on the deepest directory only, so chmod
-# separately; rdp_state_dir_ok then confirms the result rather than assuming it.
-mkdir -p "$STATE_DIR" || die "could not create $STATE_DIR"
-chmod 700 "$STATE_DIR" || die "could not restrict $STATE_DIR to this user"
-rdp_state_dir_ok "$STATE_DIR" || die "refusing to use state directory $STATE_DIR"
-state_file="$STATE_DIR/$id.state"
-log_file="$STATE_DIR/$id.log"
-# Written by the watcher below once this session's window appears. A separate
-# file rather than a field so the watcher never races write_state for the state
-# file; write_state reads it and folds it into the JSON.
-established_file="$STATE_DIR/$id.established"
-rm -f "$established_file"
-trap 'rm -f "$established_file"' EXIT
-started_at=$(printf '%(%s)T' -1)
+# Skipped entirely for --test. A probe is not a session: it needs no state
+# file, and running this for one is actively harmful, because the cleanup
+# below removes $id.established. Probing an id that is *currently connected*
+# would wipe the marker for that live session, and when it later dropped the
+# launcher would fall back to the connect-time message this whole change
+# exists to stop it printing. The Test button is hidden on live rows, but the
+# `t` shortcut and the CLI have no such guard.
+#
+# It also means --test still works where the state directory cannot be created.
+if (( ! test_only )); then
 
-# Recorded so readers can tell this process from a later one that inherits its
-# pid. Without it `kill -0` is the only check available, and that cannot
-# distinguish our launcher from whatever recycled the number.
-start_ticks=$(rdp_start_ticks $$) || die "cannot read /proc/$$/stat to identify this process"
+  STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
+  # `mkdir -p -m` would set the mode on the deepest directory only, so chmod
+  # separately; rdp_state_dir_ok then confirms the result rather than assuming it.
+  mkdir -p "$STATE_DIR" || die "could not create $STATE_DIR"
+  chmod 700 "$STATE_DIR" || die "could not restrict $STATE_DIR to this user"
+  rdp_state_dir_ok "$STATE_DIR" || die "refusing to use state directory $STATE_DIR"
+  state_file="$STATE_DIR/$id.state"
+  log_file="$STATE_DIR/$id.log"
+  # Written by the watcher below once this session's window appears. A separate
+  # file rather than a field so the watcher never races write_state for the state
+  # file; write_state reads it and folds it into the JSON.
+  established_file="$STATE_DIR/$id.established"
+  rm -f "$established_file"
+  trap 'rm -f "$established_file"' EXIT
+  started_at=$(printf '%(%s)T' -1)
+
+  # Recorded so readers can tell this process from a later one that inherits its
+  # pid. Without it `kill -0` is the only check available, and that cannot
+  # distinguish our launcher from whatever recycled the number.
+  start_ticks=$(rdp_start_ticks $$) || die "cannot read /proc/$$/stat to identify this process"
+fi
 
 write_state() {
   local phase=$1 exit_code=${2:-null} message=${3:-}

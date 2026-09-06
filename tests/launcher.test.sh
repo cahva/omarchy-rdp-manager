@@ -504,6 +504,38 @@ if [[ "$fail_msg" == *xfreerdp3* ]]; then ok; else bad "a missing FreeRDP must s
 cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
 chmod +x "$fake_bin/omarchy-rdp-launch"
 
+# A probe must not touch a *live* session's state either. The state-file setup
+# clears $id.established, so running --test against an id that is currently
+# connected wiped the marker for the running session. When that session later
+# dropped, established read false and the launcher printed the connect-time
+# message about a link that had worked for an hour: the exact failure this
+# change exists to prevent, reintroduced by it.
+printf '#!/usr/bin/env bash\nprintf secret\n' > "$fake_bin/omarchy-rdp-secret"
+chmod +x "$fake_bin/omarchy-rdp-secret"
+rm -rf "$fake_state"
+mkdir -p "$fake_state"
+chmod 700 "$fake_state"
+: > "$fake_state/baseline.established"
+OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" baseline --test >/dev/null 2>&1
+if [[ -e "$fake_state/baseline.established" ]]; then ok; else bad "--test deleted a live session's established marker"; fi
+
+# And a probe must not depend on a usable state directory, since it needs none.
+# The reorder briefly broke that by running the setup for probes too. FreeRDP is
+# stubbed out here: the probe's own exit status is not what is being tested, and
+# the fixture host is not meant to be dialled.
+cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+sed -i 's|^XFREERDP=.*|XFREERDP=/bin/true|' "$fake_bin/omarchy-rdp-launch"
+chmod +x "$fake_bin/omarchy-rdp-launch"
+probe_err=$(OMARCHY_RDP_STATE_DIR=/proc/nonexistent/nope \
+  "$fake_bin/omarchy-rdp-launch" baseline --test 2>&1 >/dev/null)
+if [[ "$probe_err" == *"state directory"* ]]; then
+  bad "--test died on the state directory it does not need: $probe_err"
+else
+  ok
+fi
+cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+chmod +x "$fake_bin/omarchy-rdp-launch"
+
 # A probe is not a session and must not leave one behind.
 for probe_flag in --test --dry-run; do
   launch_with_secret_exit 1 baseline "$probe_flag"

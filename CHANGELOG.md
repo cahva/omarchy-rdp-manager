@@ -26,6 +26,17 @@
   setup, so it had nowhere to record the reason either. It now sits below it and
   says to install the freerdp package. CI is a machine without FreeRDP, which is
   how this one surfaced.
+- Some failures still cannot record a reason, because they happen before there
+  is anywhere to write one: an unreadable config, an unknown connection id, and
+  a state directory the helpers refuse. The panel's fallback no longer guesses
+  at a cause for them. It now says the launcher reported no status and gives the
+  command to run in a terminal, which prints the real error.
+- `--test` no longer touches a running session. The state-file setup clears
+  `<id>.established`, so probing an id that was currently connected wiped the
+  marker for the live session, and when that session later dropped the launcher
+  fell back to the connect-time message. Probes skip the state-file section
+  entirely now, which also means `--test` works where no state directory can be
+  created. Found in review, not by the tests.
 - `--test` and `--dry-run` are probes rather than sessions, so a failure in
   either no longer leaves a state file behind for the panel to display.
 
