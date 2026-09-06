@@ -636,6 +636,128 @@ wait "$owner_pid" 2>/dev/null
 cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
 chmod +x "$fake_bin/omarchy-rdp-launch"
 
+# Two launchers for one id must not both proceed (#22). The ownership check
+# above is a read, so before the lock both could pass it and then run FreeRDP
+# against one wm-class, one state file and one keyring entry. Reproduced by
+# starting two at once: both proceeded.
+if [[ -x /usr/bin/flock ]]; then
+  race_dir="$TMP/race"
+  race_stub="$TMP/race-stub"
+  # Lingers, so the winner still holds the lock while the loser tries.
+  printf '#!/usr/bin/env bash\nexec sleep 5\n' > "$race_stub"
+  chmod +x "$race_stub"
+  cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+  sed -i "s|^XFREERDP=.*|XFREERDP=$race_stub|" "$fake_bin/omarchy-rdp-launch"
+  chmod +x "$fake_bin/omarchy-rdp-launch"
+  printf '#!/usr/bin/env bash\nprintf secret\n' > "$fake_bin/omarchy-rdp-secret"
+  chmod +x "$fake_bin/omarchy-rdp-secret"
+  rm -rf "$race_dir"
+  mkdir -p "$race_dir"
+  chmod 700 "$race_dir"
+
+  # Waits for a launcher to actually hold the lock and start a session, rather
+  # than guessing with a fixed sleep, which is what makes these flake on a
+  # loaded runner.
+  wait_for_state() {
+    local dir=$1 want=$2 n
+    for n in $(seq 1 60); do
+      [[ "$(jq -r '.phase' "$dir/baseline.state" 2>/dev/null)" == "$want" ]] && return 0
+      sleep 0.2
+    done
+    return 1
+  }
+
+  race_pids=()
+  for race_n in 1 2; do
+    OMARCHY_RDP_STATE_DIR="$race_dir" "$fake_bin/omarchy-rdp-launch" baseline \
+      >"$race_dir/out$race_n" 2>&1 &
+    race_pids+=($!)
+  done
+  # One of them must get as far as writing "connecting"; the other is refused
+  # before it writes anything.
+  wait_for_state "$race_dir" connecting || bad "no launcher reached connecting"
+
+  race_refused=$(cat "$race_dir"/out* 2>/dev/null | grep -c "already starting")
+  if [[ "$race_refused" == "1" ]]; then ok; else bad "exactly one of two simultaneous launches must be refused, got $race_refused"; fi
+
+  # The lock must belong to the launcher alone. fds survive exec, so without
+  # 9>&- the FreeRDP child and the watcher subshell would hold it too, and an
+  # orphan outliving a killed launcher would keep the id locked while the status
+  # helper reported the session stopped.
+  race_lock="$race_dir/baseline.lock"
+  race_extra=0
+  # Every descriptor, not just 9: an inheritor can dup it elsewhere, and a scan
+  # fixed on 9 would miss that.
+  for race_fd in /proc/[0-9]*/fd/*; do
+    [[ $(readlink "$race_fd" 2>/dev/null) == "$race_lock" ]] || continue
+    race_pid=${race_fd#/proc/}; race_pid=${race_pid%%/*}
+    # Compared against the actual pids, not the command line: a subshell forked
+    # with & keeps its parent's argv, so the watcher reads as "omarchy-rdp-launch"
+    # too and a substring test would wave it through. The watcher inheriting the
+    # lock is the exact case this is meant to catch.
+    race_is_launcher=0
+    for race_known in "${race_pids[@]}"; do
+      [[ "$race_pid" == "$race_known" ]] && race_is_launcher=1
+    done
+    (( race_is_launcher )) || race_extra=$((race_extra + 1))
+  done
+  if [[ "$race_extra" == "0" ]]; then ok; else bad "$race_extra non-launcher process(es) inherited the lock"; fi
+
+  # SIGTERM rather than SIGKILL: the launcher handles it, tears its child down
+  # and exits 0, so bash does not print a job-control "Killed" line mid-suite.
+  for race_p in "${race_pids[@]}"; do kill -TERM "$race_p" 2>/dev/null; done
+  for race_p in "${race_pids[@]}"; do wait "$race_p" 2>/dev/null; done
+  pkill -f "$race_stub" 2>/dev/null || true
+
+  # A reconnect straight after disconnecting must proceed. The first fix for
+  # this closed the lock on the rdp_terminate call with `9>&-`, which does not
+  # work: bash keeps a hidden restore copy of the descriptor for the duration of
+  # a foreground function call, the escalation subshell forks during the call
+  # and inherits the copy, and it held the lock for the whole grace period while
+  # every scan of fd 9 showed closed. Every disconnect opened the window, so
+  # this asserts the behaviour, not the lock state, and it fails against the
+  # redirect version deterministically.
+  #
+  # The reconnect is backgrounded. Run synchronously it blocks on the whole stub
+  # session, so the suite would crawl exactly and only when the code is right.
+  td_stub="$TMP/teardown-stub"
+  printf '#!/usr/bin/env bash\nexec sleep 60\n' > "$td_stub"
+  chmod +x "$td_stub"
+  cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+  sed -i "s|^XFREERDP=.*|XFREERDP=$td_stub|" "$fake_bin/omarchy-rdp-launch"
+  chmod +x "$fake_bin/omarchy-rdp-launch"
+  rm -rf "$race_dir"
+  mkdir -p "$race_dir"
+  chmod 700 "$race_dir"
+
+  # A short grace so each run's escalation subshell does not outlive the suite.
+  OMARCHY_RDP_STATE_DIR="$race_dir" OMARCHY_RDP_TERM_GRACE=2 \
+    "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>&1 &
+  td_first=$!
+  wait_for_state "$race_dir" connecting || bad "teardown: the first launch never reached connecting"
+  kill -TERM "$td_first" 2>/dev/null
+  wait "$td_first" 2>/dev/null
+
+  OMARCHY_RDP_STATE_DIR="$race_dir" OMARCHY_RDP_TERM_GRACE=2 \
+    "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>"$race_dir/reconnect.err" &
+  td_second=$!
+  td_verdict=""
+  for _ in $(seq 1 60); do
+    if grep -q "already starting" "$race_dir/reconnect.err" 2>/dev/null; then td_verdict=refused; break; fi
+    if [[ "$(jq -r '.phase' "$race_dir/baseline.state" 2>/dev/null)" == "connecting" ]]; then td_verdict=proceeded; break; fi
+    sleep 0.2
+  done
+  if [[ "$td_verdict" == "proceeded" ]]; then ok; else bad "a reconnect right after disconnect must proceed, got: ${td_verdict:-nothing within 12s}"; fi
+  kill -TERM "$td_second" 2>/dev/null
+  wait "$td_second" 2>/dev/null
+  pkill -f "$td_stub" 2>/dev/null || true
+
+  cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+  chmod +x "$fake_bin/omarchy-rdp-launch"
+else
+  bad "flock is missing; the launcher now requires it and cannot serialise without it"
+fi
+
 # The exit-code table is written twice: as EXIT_MESSAGES in Model.js and as the
 # case statement in the launcher. Every entry above 143 was wrong once already,
 # because both were derived from "135 + low byte of ERRCONNECT_*" and the real

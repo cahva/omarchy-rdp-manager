@@ -21,6 +21,7 @@ XFREERDP=/usr/bin/xfreerdp3
 TERM_GRACE=${OMARCHY_RDP_TERM_GRACE:-10}
 JQ=/usr/bin/jq
 HYPRCTL=/usr/bin/hyprctl
+FLOCK=/usr/bin/flock
 NOTIFY=/usr/bin/omarchy-notification-send
 
 SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -313,6 +314,23 @@ on_term() {
   if [[ $child -gt 0 ]]; then
     # Escalates to SIGKILL after a grace period: FreeRDP acknowledges SIGTERM
     # and then does not necessarily exit. See rdp_terminate in lib-process.sh.
+    #
+    # The lock is closed here for real, with exec, and not with a redirect on
+    # the call. `rdp_terminate ... 9>&-` looks equivalent and is not: bash
+    # implements a redirect scoped to a foreground function call by saving the
+    # descriptor to an internal high fd so it can restore it afterwards, and the
+    # escalation subshell forks during the call and inherits that copy. The copy
+    # is close-on-exec, so the exec'd sleep looks clean and so does every scan
+    # of fd 9, but the subshell itself is forked bash that never execs, and it
+    # held the lock (observed on fd 10) for the whole grace period. A reconnect
+    # right after disconnecting, the normal thing to do, was refused with
+    # "already starting" for a session that had ended.
+    #
+    # The launcher runs lockless for its last few milliseconds; the ownership
+    # check covers that window, since the state file still names a live pid.
+    # Closing a never-opened fd is a no-op, so a TERM during --test or
+    # --dry-run, where the lock was never taken, is safe.
+    exec 9>&-
     rdp_terminate "$child" "$child_ticks" "$TERM_GRACE" || true
   fi
   if [[ ${watcher:-0} -gt 0 ]]; then
@@ -347,6 +365,31 @@ if (( ! test_only )); then
   # file rather than a field so the watcher never races write_state for the state
   # file; write_state reads it and folds it into the JSON.
   established_file="$STATE_DIR/$id.established"
+
+  # Serialise launches for this id before reading anything (#22).
+  #
+  # The ownership check below is a read, so without this two launchers can both
+  # pass it before either writes a state file, and both then run FreeRDP against
+  # one wm-class, one state file and one keyring entry. Reproduced by starting
+  # two at once: both proceeded.
+  #
+  # The kernel releases the lock when this process dies, SIGKILL included, so
+  # there is no stale lock to reap and the file is never removed: unlinking a
+  # lock another process may be holding is its own race.
+  lock_file="$STATE_DIR/$id.lock"
+  # Required, not optional. Skipping the lock when flock is missing would leave
+  # exactly the race this is here to close, silently. It ships in util-linux, so
+  # its absence is a broken system rather than a configuration to tolerate, and
+  # jq is treated the same way above.
+  [[ -x $FLOCK ]] || die "flock not found at $FLOCK (install util-linux)"
+  exec 9>"$lock_file" || die "could not open $lock_file"
+  if ! "$FLOCK" -n 9; then
+    # Deliberately not through die(). The launcher that holds the lock may not
+    # have written its state file yet, so there would be nothing to protect, and
+    # recording this failure would land on a session about to start.
+    printf 'omarchy-rdp-launch: a session for %s is already starting\n' "$id" >&2
+    exit 1
+  fi
 
   # Checked before anything below touches the directory. One connection id means
   # one session: two would share a wm-class, a state file and a keyring entry,
@@ -429,8 +472,12 @@ write_state connecting
 chmod 600 "$log_file" 2>/dev/null || true
 
 # Backgrounded rather than exec'd so the TERM trap above can forward the signal.
+# 9>&- keeps the lock out of the child. fds survive exec, so FreeRDP would
+# otherwise hold it too, and an orphaned FreeRDP whose launcher was killed would
+# keep the id locked while the status helper reported the session stopped: the
+# panel would offer Connect and the launcher would refuse it.
 "$XFREERDP" /args-from:fd:3 3< <(printf '%s\n' "${args[@]}") \
-  >/dev/null 2>>"$log_file" &
+  >/dev/null 2>>"$log_file" 9>&- &
 child=$!
 unset args
 # Recorded now so the escalation in on_term() can prove the pid it is about to
@@ -463,7 +510,12 @@ watch_for_window() {
   done
 }
 watcher=0
-watch_for_window &
+# 9>&- for the same reason as the FreeRDP child: this subshell would otherwise
+# hold the lock, and it polls for up to ten minutes. A launcher killed outright
+# while FreeRDP survives would leave the watcher running and the id locked,
+# while the status helper reported the session stopped. The lock should track
+# the launcher, which is what owns the state file.
+watch_for_window 9>&- &
 watcher=$!
 
 # `wait` returns early when a trapped signal arrives, with the child still
