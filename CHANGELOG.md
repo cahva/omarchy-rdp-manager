@@ -7,6 +7,25 @@
 
 ### Fixed
 
+- A failed launch could mark a healthy session dead
+  ([#20](https://github.com/cahva/omarchy-rdp-manager/issues/20)). `die()` writes
+  phase `exited`, and the status helper only re-verifies liveness for
+  `connecting` and `connected`, so any other phase is believed. Launching an id
+  that was already connected, where the second launch then failed, overwrote the
+  running session's state with the dead launcher's pid. The panel dropped its
+  Disconnect button while FreeRDP was still running and the window still on
+  screen, leaving no way out but killing it by hand. `die()` now refuses to
+  overwrite a state file that still belongs to a live launcher, using the same
+  `rdp_same_process` identity check as the status helper, so a stale file from a
+  crashed session still gets replaced as before.
+- A second launch of an already-running connection is refused rather than
+  half-started. One id means one session: two would share a `wm-class`, a state
+  file and a keyring entry.
+- The `c` and `t` shortcuts do nothing on a connected row, matching the Connect
+  and Test buttons, which are hidden there. The buttons had the guard and the
+  keyboard did not, which is how a duplicate launch was reachable from the panel
+  at all. `Enter` was already state-aware and is unchanged.
+
 - "The launcher never started, check that bin/ is executable" was shown for
   failures that had nothing to do with `bin/`
   ([#18](https://github.com/cahva/omarchy-rdp-manager/issues/18), reported by

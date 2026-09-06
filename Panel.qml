@@ -166,11 +166,17 @@ Panel {
     if (key === "n") { root.openForm(null); return }
     var conn = selectedConnection()
     if (!conn) return
+    // Connect and Test are hidden on a live row (`visible: !row.live`), but these
+    // two shortcuts skipped that check. Launching a second session for an id
+    // that is already connected fails, and until #20 that failure overwrote the
+    // healthy session's state file, so the panel dropped its Disconnect while
+    // FreeRDP was still running. Enter is already state-aware; see activate().
+    var live = Model.isLive(root.sessionFor(conn.id))
     if (key === "e") root.openForm(conn)
     else if (key === "d") root.confirmDeleteId = conn.id
-    else if (key === "t" && svc) svc.testConnection(conn.id)
+    else if (key === "t" && svc && !live) svc.testConnection(conn.id)
     else if (key === "s" && svc) svc.disconnect(conn.id)
-    else if (key === "c" && svc) svc.connect(conn.id, { notify: root.notifyOnDisconnect })
+    else if (key === "c" && svc && !live) svc.connect(conn.id, { notify: root.notifyOnDisconnect })
   }
 
   // ------------------------------------------------------------------- forms

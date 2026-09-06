@@ -546,6 +546,74 @@ for probe_flag in --test --dry-run; do
   fi
 done
 
+# die() writes phase "exited", and the status helper believes any phase other
+# than connecting/connected without re-checking. So a second launch of an
+# already-connected id, failing for any reason, used to mark the healthy session
+# dead: the panel dropped its Disconnect while FreeRDP was still running (#20).
+#
+# start_stubborn above gives a genuinely live process to name in the state file,
+# which is what makes rdp_same_process agree the session is real.
+cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+# Stubbed: these tests are about state ownership, and the fixture host is not
+# meant to be dialled.
+sed -i 's|^XFREERDP=.*|XFREERDP=/bin/true|' "$fake_bin/omarchy-rdp-launch"
+chmod +x "$fake_bin/omarchy-rdp-launch"
+
+owner_pid=$(start_stubborn "$TMP/ready-owner")
+owner_ticks=$(rdp_start_ticks "$owner_pid")
+
+# Write a state file that names $1 as the launcher, with start time $2.
+forge_live_state() {
+  rm -rf "$fake_state"
+  mkdir -p "$fake_state"
+  chmod 700 "$fake_state"
+  cat > "$fake_state/baseline.state" <<FORGED
+{"id":"baseline","pid":$1,"startTicks":"$2","phase":"connected",
+ "wmClass":"omarchy-rdp-baseline","host":"10.0.0.5","startedAt":1,
+ "exitCode":null,"established":true,"message":""}
+FORGED
+}
+
+# A launch that fails must leave a live session's state alone.
+forge_live_state "$owner_pid" "$owner_ticks"
+state_before=$(md5sum "$fake_state/baseline.state" | cut -d' ' -f1)
+printf '#!/usr/bin/env bash\nexit 124\n' > "$fake_bin/omarchy-rdp-secret"
+chmod +x "$fake_bin/omarchy-rdp-secret"
+OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>&1
+if [[ "$state_before" == "$(md5sum "$fake_state/baseline.state" | cut -d' ' -f1)" ]]; then
+  ok
+else
+  bad "a failed launch overwrote a live session's state file" "$(cat "$fake_state/baseline.state")"
+fi
+
+# And a duplicate launch is refused outright rather than half-started.
+forge_live_state "$owner_pid" "$owner_ticks"
+state_before=$(md5sum "$fake_state/baseline.state" | cut -d' ' -f1)
+printf '#!/usr/bin/env bash\nprintf secret\n' > "$fake_bin/omarchy-rdp-secret"
+chmod +x "$fake_bin/omarchy-rdp-secret"
+dup_err=$(OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" baseline 2>&1 >/dev/null)
+if [[ "$dup_err" == *"already running"* ]]; then ok; else bad "a duplicate launch must be refused, got: ${dup_err:-<nothing>}"; fi
+if [[ "$state_before" == "$(md5sum "$fake_state/baseline.state" | cut -d' ' -f1)" ]]; then
+  ok
+else
+  bad "the refusal overwrote the state file it was protecting"
+fi
+
+# A stale file must not block anything. Same pid, wrong start time, which is
+# what a recycled pid looks like: rdp_same_process rejects it and the launch
+# proceeds and records its own failure as usual.
+forge_live_state "$owner_pid" "$((owner_ticks + 1))"
+printf '#!/usr/bin/env bash\nexit 124\n' > "$fake_bin/omarchy-rdp-secret"
+chmod +x "$fake_bin/omarchy-rdp-secret"
+OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>&1
+stale_msg=$(jq -r '.message // ""' "$fake_state/baseline.state" 2>/dev/null)
+if [[ "$stale_msg" == *keyring* ]]; then ok; else bad "a stale state file blocked a launch, got: ${stale_msg:-<none>}"; fi
+
+kill -KILL "$owner_pid" 2>/dev/null
+wait "$owner_pid" 2>/dev/null
+cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+chmod +x "$fake_bin/omarchy-rdp-launch"
+
 # The exit-code table is written twice: as EXIT_MESSAGES in Model.js and as the
 # case statement in the launcher. Every entry above 143 was wrong once already,
 # because both were derived from "135 + low byte of ERRCONNECT_*" and the real

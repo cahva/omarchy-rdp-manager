@@ -52,7 +52,10 @@ GLYPH_FAIL=$'\U000F0159'
 die() {
   local message=$1 code=${2:-1}
   printf 'omarchy-rdp-launch: %s\n' "$message" >&2
-  if [[ -n ${state_file:-} ]] && (( ! test_only && ! dry_run )); then
+  # Not when another launcher still owns this id: recording our failure over its
+  # state would report a healthy session as dead (#20).
+  if [[ -n ${state_file:-} ]] && (( ! test_only && ! dry_run )) \
+     && ! state_owned_by_live_launcher; then
     write_state exited "$code" "$message"
   fi
   exit "$code"
@@ -291,6 +294,30 @@ if (( ! test_only )); then
   start_ticks=$(rdp_start_ticks $$) || die "cannot read /proc/$$/stat to identify this process"
 fi
 
+# Whether the state file currently belongs to a *different* launcher that is
+# still alive.
+#
+# die() writes phase "exited", and the status helper only re-verifies liveness
+# for "connecting" and "connected", so any other phase is believed. A second
+# launch of an already-connected id that then failed would therefore mark the
+# healthy session dead, and the panel would drop its Disconnect while FreeRDP
+# was still running (#20).
+#
+# rdp_same_process is the same identity check the status helper and disconnect
+# use: a bare pid proves nothing, because pids are recycled. A stale file whose
+# launcher is gone fails that check and is free to overwrite, which is what
+# keeps a crashed session from blocking the next launch forever.
+state_owned_by_live_launcher() {
+  [[ -n ${state_file:-} && -r ${state_file:-} ]] || return 1
+  local pid ticks
+  pid=$("$JQ" -r '.pid // 0' "$state_file" 2>/dev/null) || return 1
+  ticks=$("$JQ" -r '.startTicks // ""' "$state_file" 2>/dev/null)
+  [[ $pid =~ ^[0-9]+$ ]] && (( pid > 0 )) || return 1
+  # Our own state file. Updating that is the entire point of write_state.
+  (( pid == $$ )) && return 1
+  rdp_same_process "$pid" "$ticks"
+}
+
 write_state() {
   local phase=$1 exit_code=${2:-null} message=${3:-}
   local tmp="$state_file.$$"
@@ -329,6 +356,15 @@ on_term() {
   return 0
 }
 trap on_term TERM INT
+
+# One connection id means one session: they would share a wm-class, a state file
+# and a keyring entry, so a second launcher cannot coexist with the first. The
+# panel hides Connect on a live row, but the `c` shortcut and this CLI have no
+# such guard. die() declines to overwrite a live launcher's state, so refusing
+# through it cannot damage the session being protected.
+if (( ! test_only )) && state_owned_by_live_launcher; then
+  die "a session for '$id' is already running"
+fi
 
 # --------------------------------------------------------------- the password
 
