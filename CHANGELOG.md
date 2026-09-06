@@ -3,6 +3,28 @@
 <!-- Entries land here as they merge. The release commit renames this heading to
      the version and bumps manifest.json, so the number is chosen from what
      actually shipped rather than guessed when the branch was opened. -->
+## Unreleased
+
+### Fixed
+
+- "The launcher never started, check that bin/ is executable" was shown for
+  failures that had nothing to do with `bin/`
+  ([#18](https://github.com/cahva/omarchy-rdp-manager/issues/18), reported by
+  @smule98). The launcher's `die()` only printed to stderr, which nothing reads,
+  and it ran before any state file existed. With no state to report, the panel
+  fell back to a 12 second timeout and that one guess, whatever the real cause
+  was. `die()` now records the reason where the panel can see it, so the row
+  says what actually happened.
+- A locked keyring was reported as "no password stored". The secret helper
+  already distinguishes the two, exiting 124 when the keyring does not answer,
+  but the launcher flattened every failure into the same message and sent the
+  user to store a password that was already there. The timings made it worse:
+  the lookup gives up at 10 seconds and the panel at 12, so the misleading
+  message usually won. Same shape as [#1](https://github.com/cahva/omarchy-rdp-manager/issues/1),
+  in a different place.
+- `--test` and `--dry-run` are probes rather than sessions, so a failure in
+  either no longer leaves a state file behind for the panel to display.
+
 ## 0.3.0
 
 ### Added

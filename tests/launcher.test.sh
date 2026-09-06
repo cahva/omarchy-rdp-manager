@@ -450,6 +450,53 @@ fi
 kill -KILL "$victim_pid" 2>/dev/null
 wait "$victim_pid" 2>/dev/null
 
+# A launcher that dies before writing a state file leaves the panel with nothing
+# to report, so after 12s it falls back to "The launcher never started, check
+# that bin/ is executable" whatever the real cause was. That sent a user to
+# check file permissions when the keyring was the problem (#18).
+fake_bin="$TMP/bin"
+mkdir -p "$fake_bin"
+cp bin/* "$fake_bin/"
+chmod +x "$fake_bin"/omarchy-rdp-*
+fake_state="$TMP/failstate"
+
+# Run the launcher with a stand-in keyring helper that exits with a given code.
+launch_with_secret_exit() {
+  local code=$1 id=$2
+  shift 2
+  printf '#!/usr/bin/env bash\nexit %s\n' "$code" > "$fake_bin/omarchy-rdp-secret"
+  chmod +x "$fake_bin/omarchy-rdp-secret"
+  rm -rf "$fake_state"
+  mkdir -p "$fake_state"
+  chmod 700 "$fake_state"
+  OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" "$id" "$@" >/dev/null 2>&1
+}
+
+# 124 is the helper's "the keyring did not answer" code. The launcher used to
+# flatten it into "no password stored" and point at the wrong problem.
+launch_with_secret_exit 124 baseline
+fail_msg=$(jq -r '.message // ""' "$fake_state/baseline.state" 2>/dev/null)
+fail_code=$(jq -r '.exitCode // ""' "$fake_state/baseline.state" 2>/dev/null)
+if [[ "$fail_msg" == *keyring* ]]; then ok; else bad "a keyring timeout must say so, got: ${fail_msg:-<no state file>}"; fi
+if [[ "$fail_code" == "124" ]]; then ok; else bad "expected exitCode 124 in the state file, got ${fail_code:-<none>}"; fi
+
+launch_with_secret_exit 1 baseline
+fail_msg=$(jq -r '.message // ""' "$fake_state/baseline.state" 2>/dev/null)
+if [[ "$fail_msg" == *"No password stored"* ]]; then ok; else bad "a missing password must say so, got: ${fail_msg:-<no state file>}"; fi
+# The message is rendered as a row label, so it has to stay one short line. The
+# how-to-fix, which carries a file path, belongs on stderr.
+if [[ "$fail_msg" != *$'\n'* ]]; then ok; else bad "the panel message must be a single line, got: $fail_msg"; fi
+
+# A probe is not a session and must not leave one behind.
+for probe_flag in --test --dry-run; do
+  launch_with_secret_exit 1 baseline "$probe_flag"
+  if compgen -G "$fake_state/*.state" >/dev/null; then
+    bad "$probe_flag left a state file behind"
+  else
+    ok
+  fi
+done
+
 # The exit-code table is written twice: as EXIT_MESSAGES in Model.js and as the
 # case statement in the launcher. Every entry above 143 was wrong once already,
 # because both were derived from "135 + low byte of ERRCONNECT_*" and the real

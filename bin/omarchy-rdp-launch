@@ -39,7 +39,24 @@ CONFIG_FILE="$CONFIG_DIR/connections.json"
 GLYPH_OK=$'\U000F08B9'
 GLYPH_FAIL=$'\U000F0159'
 
-die() { printf 'omarchy-rdp-launch: %s\n' "$1" >&2; exit "${2:-1}"; }
+# Report a failure where the panel can actually see it.
+#
+# Printing to stderr alone is not enough: nothing reads it. With no state file
+# the status helper reports nothing for this id, and the panel falls back to its
+# 12 second pending timeout, which says "The launcher never started, check that
+# bin/ is executable" whatever the real cause was. For the most likely failure,
+# a locked keyring, that sends the user to look at file permissions (#18).
+#
+# Only once state_file is known, and never for --test or --dry-run: those are
+# probes, and neither should leave a session behind.
+die() {
+  local message=$1 code=${2:-1}
+  printf 'omarchy-rdp-launch: %s\n' "$message" >&2
+  if [[ -n ${state_file:-} ]] && (( ! test_only && ! dry_run )); then
+    write_state exited "$code" "$message"
+  fi
+  exit "$code"
+}
 
 id=""
 dry_run=0
@@ -240,27 +257,6 @@ fi
 
 [[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
 
-# --------------------------------------------------------------- the password
-
-# From here on `password` is the only copy. It goes into the fd-3 list and
-# nowhere else: not argv, not the environment, not a temp file, not the log.
-if ! password=$("$SECRET_HELPER" lookup "$id"); then
-  die "no password stored for '$id' — save one in the RDP panel, or run:
-  $SECRET_HELPER store $id"
-fi
-args+=("/p:$password")
-unset password
-
-# --------------------------------------------------------------------- test
-
-if (( test_only )); then
-  [[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
-  # Quiet: a probe should say nothing and mean it through its exit code.
-  args+=("+auth-only" "/log-level:OFF")
-  "$XFREERDP" /args-from:fd:3 3< <(printf '%s\n' "${args[@]}") >/dev/null 2>&1
-  exit $?
-fi
-
 # ------------------------------------------------------------------ state file
 
 STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
@@ -322,6 +318,41 @@ on_term() {
   return 0
 }
 trap on_term TERM INT
+
+# --------------------------------------------------------------- the password
+
+# From here on `password` is the only copy. It goes into the fd-3 list and
+# nowhere else: not argv, not the environment, not a temp file, not the log.
+# $? is captured on its own line, not inside `if ! ...`, where it would be the
+# status of the negation and always 0. That mistake is what made a locked
+# keyring read as "no password stored" once before, in #1.
+password=$("$SECRET_HELPER" lookup "$id")
+lookup_status=$?
+if (( lookup_status != 0 )); then
+  # The helper distinguishes these; the launcher used to flatten both into
+  # "no password stored" and send the user to fix the wrong thing.
+  (( lookup_status == 124 )) \
+    && die "The keyring did not respond, it may be locked" 124
+  # The how-to-fix goes to stderr only. die()'s message becomes a row label in
+  # the panel, so it stays to one short line; a two-line message with a file
+  # path in it would be unreadable there.
+  printf 'omarchy-rdp-launch: save one in the RDP panel, or run:\n  %s store %s\n' \
+    "$SECRET_HELPER" "$id" >&2
+  die "No password stored for this connection"
+fi
+args+=("/p:$password")
+unset password
+
+# --------------------------------------------------------------------- test
+
+if (( test_only )); then
+  [[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
+  # Quiet: a probe should say nothing and mean it through its exit code.
+  args+=("+auth-only" "/log-level:OFF")
+  "$XFREERDP" /args-from:fd:3 3< <(printf '%s\n' "${args[@]}") >/dev/null 2>&1
+  exit $?
+fi
+
 
 write_state connecting
 
