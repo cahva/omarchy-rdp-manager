@@ -487,6 +487,23 @@ if [[ "$fail_msg" == *"No password stored"* ]]; then ok; else bad "a missing pas
 # how-to-fix, which carries a file path, belongs on stderr.
 if [[ "$fail_msg" != *$'\n'* ]]; then ok; else bad "the panel message must be a single line, got: $fail_msg"; fi
 
+# A missing FreeRDP has to reach the panel the same way. This check used to sit
+# above the state-file setup, so on a machine without FreeRDP installed it died
+# with nowhere to record the reason. CI is exactly such a machine, which is how
+# the gap was found.
+printf '#!/usr/bin/env bash\nprintf secret\n' > "$fake_bin/omarchy-rdp-secret"
+chmod +x "$fake_bin/omarchy-rdp-secret"
+sed -i 's|^XFREERDP=.*|XFREERDP=/nonexistent/xfreerdp3|' "$fake_bin/omarchy-rdp-launch"
+rm -rf "$fake_state"
+mkdir -p "$fake_state"
+chmod 700 "$fake_state"
+OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>&1
+fail_msg=$(jq -r '.message // ""' "$fake_state/baseline.state" 2>/dev/null)
+if [[ "$fail_msg" == *xfreerdp3* ]]; then ok; else bad "a missing FreeRDP must say so, got: ${fail_msg:-<no state file>}"; fi
+# Put the launcher back for the checks below.
+cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+chmod +x "$fake_bin/omarchy-rdp-launch"
+
 # A probe is not a session and must not leave one behind.
 for probe_flag in --test --dry-run; do
   launch_with_secret_exit 1 baseline "$probe_flag"

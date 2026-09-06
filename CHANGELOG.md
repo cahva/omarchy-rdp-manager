@@ -22,6 +22,10 @@
   the lookup gives up at 10 seconds and the panel at 12, so the misleading
   message usually won. Same shape as [#1](https://github.com/cahva/omarchy-rdp-manager/issues/1),
   in a different place.
+- A missing `xfreerdp3` reported `bin/` too. That check ran above the state-file
+  setup, so it had nowhere to record the reason either. It now sits below it and
+  says to install the freerdp package. CI is a machine without FreeRDP, which is
+  how this one surfaced.
 - `--test` and `--dry-run` are probes rather than sessions, so a failure in
   either no longer leaves a state file behind for the panel to display.
 

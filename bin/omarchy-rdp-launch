@@ -255,7 +255,6 @@ if (( dry_run )); then
   exit 0
 fi
 
-[[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
 
 # ------------------------------------------------------------------ state file
 
@@ -353,6 +352,11 @@ if (( test_only )); then
   exit $?
 fi
 
+
+# Checked here rather than earlier so a missing FreeRDP is reported through the
+# state file like every other failure. Before the state file exists, die() has
+# nowhere to put the reason and the panel blames bin/ instead (#18).
+[[ -x "$XFREERDP" ]] || die "xfreerdp3 not found, install the freerdp package"
 
 write_state connecting
 
