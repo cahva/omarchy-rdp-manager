@@ -330,8 +330,14 @@ Item {
       if (byId[id]) { changed = true; continue }
       if (now - startedMs > service.pendingTimeoutMs) {
         changed = true
+        // Deliberately names no cause. The launcher records its own reason in
+        // the state file now, so reaching this means it died before it could:
+        // an unreadable config, an unknown id, or a state directory it refused.
+        // Guessing "bin/ is not executable" sent people to check file
+        // permissions for a locked keyring for months (#18).
         out.push({ id: id, pid: 0, phase: "exited", startedAt: 0, exitCode: 1,
-                   message: "The launcher never started — check that bin/ is executable" })
+                   message: "No status from the launcher. Run omarchy-rdp-launch "
+                            + id + " in a terminal." })
         continue
       }
       nextPending[id] = startedMs

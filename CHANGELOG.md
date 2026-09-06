@@ -3,6 +3,48 @@
 <!-- Entries land here as they merge. The release commit renames this heading to
      the version and bumps manifest.json, so the number is chosen from what
      actually shipped rather than guessed when the branch was opened. -->
+## Unreleased
+
+### Fixed
+
+- "The launcher never started, check that bin/ is executable" was shown for
+  failures that had nothing to do with `bin/`
+  ([#18](https://github.com/cahva/omarchy-rdp-manager/issues/18), reported by
+  @smule98). The launcher's `die()` only printed to stderr, which nothing reads,
+  and it ran before any state file existed. With no state to report, the panel
+  fell back to a 12 second timeout and that one guess, whatever the real cause
+  was. `die()` now records the reason where the panel can see it, so the row
+  says what actually happened.
+- A locked keyring was reported as "no password stored". The secret helper
+  already distinguishes the two, exiting 124 when the keyring does not answer,
+  but the launcher flattened every failure into the same message and sent the
+  user to store a password that was already there. The timings made it worse:
+  the lookup gives up at 10 seconds and the panel at 12, so the misleading
+  message usually won. Same shape as [#1](https://github.com/cahva/omarchy-rdp-manager/issues/1),
+  in a different place.
+- A missing `xfreerdp3` reported `bin/` too. That check ran above the state-file
+  setup, so it had nowhere to record the reason either. It now sits below it and
+  says to install the freerdp package. CI is a machine without FreeRDP, which is
+  how this one surfaced.
+- Some failures still cannot record a reason, because they happen before there
+  is anywhere to write one: an unreadable config, an unknown connection id, and
+  a state directory the helpers refuse. The panel's fallback no longer guesses
+  at a cause for them. It now says the launcher reported no status and gives the
+  command to run in a terminal, which prints the real error.
+- `--test` no longer touches a running session. The state-file setup clears
+  `<id>.established`, so probing an id that was currently connected wiped the
+  marker for the live session, and when that session later dropped the launcher
+  fell back to the connect-time message. Probes skip the state-file section
+  entirely now, which also means `--test` works where no state directory can be
+  created. Found in review, not by the tests.
+- The probe tests themselves dialled the fixture host. One of them ran the
+  launcher with FreeRDP unstubbed, so every run on a machine that has FreeRDP
+  installed fired a real `+auth-only` attempt at `10.0.0.5` as Administrator.
+  CI never saw it because no FreeRDP is installed there. Stubbing it out took
+  the suite from 27.6s to 12.4s, which was the connection timing out.
+- `--test` and `--dry-run` are probes rather than sessions, so a failure in
+  either no longer leaves a state file behind for the panel to display.
+
 ## 0.3.0
 
 ### Added

@@ -39,7 +39,24 @@ CONFIG_FILE="$CONFIG_DIR/connections.json"
 GLYPH_OK=$'\U000F08B9'
 GLYPH_FAIL=$'\U000F0159'
 
-die() { printf 'omarchy-rdp-launch: %s\n' "$1" >&2; exit "${2:-1}"; }
+# Report a failure where the panel can actually see it.
+#
+# Printing to stderr alone is not enough: nothing reads it. With no state file
+# the status helper reports nothing for this id, and the panel falls back to its
+# 12 second pending timeout, which says "The launcher never started, check that
+# bin/ is executable" whatever the real cause was. For the most likely failure,
+# a locked keyring, that sends the user to look at file permissions (#18).
+#
+# Only once state_file is known, and never for --test or --dry-run: those are
+# probes, and neither should leave a session behind.
+die() {
+  local message=$1 code=${2:-1}
+  printf 'omarchy-rdp-launch: %s\n' "$message" >&2
+  if [[ -n ${state_file:-} ]] && (( ! test_only && ! dry_run )); then
+    write_state exited "$code" "$message"
+  fi
+  exit "$code"
+}
 
 id=""
 dry_run=0
@@ -238,51 +255,41 @@ if (( dry_run )); then
   exit 0
 fi
 
-[[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
-
-# --------------------------------------------------------------- the password
-
-# From here on `password` is the only copy. It goes into the fd-3 list and
-# nowhere else: not argv, not the environment, not a temp file, not the log.
-if ! password=$("$SECRET_HELPER" lookup "$id"); then
-  die "no password stored for '$id' — save one in the RDP panel, or run:
-  $SECRET_HELPER store $id"
-fi
-args+=("/p:$password")
-unset password
-
-# --------------------------------------------------------------------- test
-
-if (( test_only )); then
-  [[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
-  # Quiet: a probe should say nothing and mean it through its exit code.
-  args+=("+auth-only" "/log-level:OFF")
-  "$XFREERDP" /args-from:fd:3 3< <(printf '%s\n' "${args[@]}") >/dev/null 2>&1
-  exit $?
-fi
 
 # ------------------------------------------------------------------ state file
 
-STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
-# `mkdir -p -m` would set the mode on the deepest directory only, so chmod
-# separately; rdp_state_dir_ok then confirms the result rather than assuming it.
-mkdir -p "$STATE_DIR" || die "could not create $STATE_DIR"
-chmod 700 "$STATE_DIR" || die "could not restrict $STATE_DIR to this user"
-rdp_state_dir_ok "$STATE_DIR" || die "refusing to use state directory $STATE_DIR"
-state_file="$STATE_DIR/$id.state"
-log_file="$STATE_DIR/$id.log"
-# Written by the watcher below once this session's window appears. A separate
-# file rather than a field so the watcher never races write_state for the state
-# file; write_state reads it and folds it into the JSON.
-established_file="$STATE_DIR/$id.established"
-rm -f "$established_file"
-trap 'rm -f "$established_file"' EXIT
-started_at=$(printf '%(%s)T' -1)
+# Skipped entirely for --test. A probe is not a session: it needs no state
+# file, and running this for one is actively harmful, because the cleanup
+# below removes $id.established. Probing an id that is *currently connected*
+# would wipe the marker for that live session, and when it later dropped the
+# launcher would fall back to the connect-time message this whole change
+# exists to stop it printing. The Test button is hidden on live rows, but the
+# `t` shortcut and the CLI have no such guard.
+#
+# It also means --test still works where the state directory cannot be created.
+if (( ! test_only )); then
 
-# Recorded so readers can tell this process from a later one that inherits its
-# pid. Without it `kill -0` is the only check available, and that cannot
-# distinguish our launcher from whatever recycled the number.
-start_ticks=$(rdp_start_ticks $$) || die "cannot read /proc/$$/stat to identify this process"
+  STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
+  # `mkdir -p -m` would set the mode on the deepest directory only, so chmod
+  # separately; rdp_state_dir_ok then confirms the result rather than assuming it.
+  mkdir -p "$STATE_DIR" || die "could not create $STATE_DIR"
+  chmod 700 "$STATE_DIR" || die "could not restrict $STATE_DIR to this user"
+  rdp_state_dir_ok "$STATE_DIR" || die "refusing to use state directory $STATE_DIR"
+  state_file="$STATE_DIR/$id.state"
+  log_file="$STATE_DIR/$id.log"
+  # Written by the watcher below once this session's window appears. A separate
+  # file rather than a field so the watcher never races write_state for the state
+  # file; write_state reads it and folds it into the JSON.
+  established_file="$STATE_DIR/$id.established"
+  rm -f "$established_file"
+  trap 'rm -f "$established_file"' EXIT
+  started_at=$(printf '%(%s)T' -1)
+
+  # Recorded so readers can tell this process from a later one that inherits its
+  # pid. Without it `kill -0` is the only check available, and that cannot
+  # distinguish our launcher from whatever recycled the number.
+  start_ticks=$(rdp_start_ticks $$) || die "cannot read /proc/$$/stat to identify this process"
+fi
 
 write_state() {
   local phase=$1 exit_code=${2:-null} message=${3:-}
@@ -322,6 +329,46 @@ on_term() {
   return 0
 }
 trap on_term TERM INT
+
+# --------------------------------------------------------------- the password
+
+# From here on `password` is the only copy. It goes into the fd-3 list and
+# nowhere else: not argv, not the environment, not a temp file, not the log.
+# $? is captured on its own line, not inside `if ! ...`, where it would be the
+# status of the negation and always 0. That mistake is what made a locked
+# keyring read as "no password stored" once before, in #1.
+password=$("$SECRET_HELPER" lookup "$id")
+lookup_status=$?
+if (( lookup_status != 0 )); then
+  # The helper distinguishes these; the launcher used to flatten both into
+  # "no password stored" and send the user to fix the wrong thing.
+  (( lookup_status == 124 )) \
+    && die "The keyring did not respond, it may be locked" 124
+  # The how-to-fix goes to stderr only. die()'s message becomes a row label in
+  # the panel, so it stays to one short line; a two-line message with a file
+  # path in it would be unreadable there.
+  printf 'omarchy-rdp-launch: save one in the RDP panel, or run:\n  %s store %s\n' \
+    "$SECRET_HELPER" "$id" >&2
+  die "No password stored for this connection"
+fi
+args+=("/p:$password")
+unset password
+
+# --------------------------------------------------------------------- test
+
+if (( test_only )); then
+  [[ -x "$XFREERDP" ]] || die "xfreerdp3 not found at $XFREERDP (install the freerdp package)"
+  # Quiet: a probe should say nothing and mean it through its exit code.
+  args+=("+auth-only" "/log-level:OFF")
+  "$XFREERDP" /args-from:fd:3 3< <(printf '%s\n' "${args[@]}") >/dev/null 2>&1
+  exit $?
+fi
+
+
+# Checked here rather than earlier so a missing FreeRDP is reported through the
+# state file like every other failure. Before the state file exists, die() has
+# nowhere to put the reason and the panel blames bin/ instead (#18).
+[[ -x "$XFREERDP" ]] || die "xfreerdp3 not found, install the freerdp package"
 
 write_state connecting
 

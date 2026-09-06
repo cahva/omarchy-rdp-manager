@@ -450,6 +450,102 @@ fi
 kill -KILL "$victim_pid" 2>/dev/null
 wait "$victim_pid" 2>/dev/null
 
+# A launcher that dies before writing a state file leaves the panel with nothing
+# to report, so after 12s it falls back to "The launcher never started, check
+# that bin/ is executable" whatever the real cause was. That sent a user to
+# check file permissions when the keyring was the problem (#18).
+fake_bin="$TMP/bin"
+mkdir -p "$fake_bin"
+cp bin/* "$fake_bin/"
+chmod +x "$fake_bin"/omarchy-rdp-*
+fake_state="$TMP/failstate"
+
+# Run the launcher with a stand-in keyring helper that exits with a given code.
+launch_with_secret_exit() {
+  local code=$1 id=$2
+  shift 2
+  printf '#!/usr/bin/env bash\nexit %s\n' "$code" > "$fake_bin/omarchy-rdp-secret"
+  chmod +x "$fake_bin/omarchy-rdp-secret"
+  rm -rf "$fake_state"
+  mkdir -p "$fake_state"
+  chmod 700 "$fake_state"
+  OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" "$id" "$@" >/dev/null 2>&1
+}
+
+# 124 is the helper's "the keyring did not answer" code. The launcher used to
+# flatten it into "no password stored" and point at the wrong problem.
+launch_with_secret_exit 124 baseline
+fail_msg=$(jq -r '.message // ""' "$fake_state/baseline.state" 2>/dev/null)
+fail_code=$(jq -r '.exitCode // ""' "$fake_state/baseline.state" 2>/dev/null)
+if [[ "$fail_msg" == *keyring* ]]; then ok; else bad "a keyring timeout must say so, got: ${fail_msg:-<no state file>}"; fi
+if [[ "$fail_code" == "124" ]]; then ok; else bad "expected exitCode 124 in the state file, got ${fail_code:-<none>}"; fi
+
+launch_with_secret_exit 1 baseline
+fail_msg=$(jq -r '.message // ""' "$fake_state/baseline.state" 2>/dev/null)
+if [[ "$fail_msg" == *"No password stored"* ]]; then ok; else bad "a missing password must say so, got: ${fail_msg:-<no state file>}"; fi
+# The message is rendered as a row label, so it has to stay one short line. The
+# how-to-fix, which carries a file path, belongs on stderr.
+if [[ "$fail_msg" != *$'\n'* ]]; then ok; else bad "the panel message must be a single line, got: $fail_msg"; fi
+
+# A missing FreeRDP has to reach the panel the same way. This check used to sit
+# above the state-file setup, so on a machine without FreeRDP installed it died
+# with nowhere to record the reason. CI is exactly such a machine, which is how
+# the gap was found.
+printf '#!/usr/bin/env bash\nprintf secret\n' > "$fake_bin/omarchy-rdp-secret"
+chmod +x "$fake_bin/omarchy-rdp-secret"
+sed -i 's|^XFREERDP=.*|XFREERDP=/nonexistent/xfreerdp3|' "$fake_bin/omarchy-rdp-launch"
+rm -rf "$fake_state"
+mkdir -p "$fake_state"
+chmod 700 "$fake_state"
+OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>&1
+fail_msg=$(jq -r '.message // ""' "$fake_state/baseline.state" 2>/dev/null)
+if [[ "$fail_msg" == *xfreerdp3* ]]; then ok; else bad "a missing FreeRDP must say so, got: ${fail_msg:-<no state file>}"; fi
+# Put the launcher back for the checks below, with FreeRDP stubbed out. The
+# probe tests are about state handling, not about reaching a host, and the
+# fixture host is not meant to be dialled: unstubbed, every run on a machine
+# that has FreeRDP installed fires a real +auth-only attempt at 10.0.0.5 as
+# Administrator. CI never noticed because no FreeRDP is installed there.
+cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+sed -i 's|^XFREERDP=.*|XFREERDP=/bin/true|' "$fake_bin/omarchy-rdp-launch"
+chmod +x "$fake_bin/omarchy-rdp-launch"
+
+# A probe must not touch a *live* session's state either. The state-file setup
+# clears $id.established, so running --test against an id that is currently
+# connected wiped the marker for the running session. When that session later
+# dropped, established read false and the launcher printed the connect-time
+# message about a link that had worked for an hour: the exact failure this
+# change exists to prevent, reintroduced by it.
+printf '#!/usr/bin/env bash\nprintf secret\n' > "$fake_bin/omarchy-rdp-secret"
+chmod +x "$fake_bin/omarchy-rdp-secret"
+rm -rf "$fake_state"
+mkdir -p "$fake_state"
+chmod 700 "$fake_state"
+: > "$fake_state/baseline.established"
+OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" baseline --test >/dev/null 2>&1
+if [[ -e "$fake_state/baseline.established" ]]; then ok; else bad "--test deleted a live session's established marker"; fi
+
+# And a probe must not depend on a usable state directory, since it needs none.
+# The reorder briefly broke that by running the setup for probes too.
+probe_err=$(OMARCHY_RDP_STATE_DIR=/proc/nonexistent/nope \
+  "$fake_bin/omarchy-rdp-launch" baseline --test 2>&1 >/dev/null)
+if [[ "$probe_err" == *"state directory"* ]]; then
+  bad "--test died on the state directory it does not need: $probe_err"
+else
+  ok
+fi
+cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+chmod +x "$fake_bin/omarchy-rdp-launch"
+
+# A probe is not a session and must not leave one behind.
+for probe_flag in --test --dry-run; do
+  launch_with_secret_exit 1 baseline "$probe_flag"
+  if compgen -G "$fake_state/*.state" >/dev/null; then
+    bad "$probe_flag left a state file behind"
+  else
+    ok
+  fi
+done
+
 # The exit-code table is written twice: as EXIT_MESSAGES in Model.js and as the
 # case statement in the launcher. Every entry above 143 was wrong once already,
 # because both were derived from "135 + low byte of ERRCONNECT_*" and the real
