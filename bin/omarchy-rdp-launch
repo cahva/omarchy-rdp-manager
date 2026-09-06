@@ -314,7 +314,16 @@ on_term() {
   if [[ $child -gt 0 ]]; then
     # Escalates to SIGKILL after a grace period: FreeRDP acknowledges SIGTERM
     # and then does not necessarily exit. See rdp_terminate in lib-process.sh.
-    rdp_terminate "$child" "$child_ticks" "$TERM_GRACE" || true
+    #
+    # 9>&- closes the lock for this call, so the escalation subshell it forks
+    # does not inherit it. Descriptors survive across the fork just as they do
+    # across exec, and that subshell lives for the whole grace period (default
+    # 10s). Without this, disconnecting would hold the lock for those seconds
+    # after the launcher has already exited and written "stopped", and a
+    # reconnect in that window, the normal thing to do, would be refused with
+    # "already starting" for a session that had ended. Redirecting on the call
+    # keeps lib-process.sh untouched for its other uses.
+    rdp_terminate "$child" "$child_ticks" "$TERM_GRACE" 9>&- || true
   fi
   if [[ ${watcher:-0} -gt 0 ]]; then
     kill -TERM "$watcher" 2>/dev/null || true

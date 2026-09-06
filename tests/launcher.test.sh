@@ -655,13 +655,30 @@ if [[ -x /usr/bin/flock ]]; then
   mkdir -p "$race_dir"
   chmod 700 "$race_dir"
 
+  # Wait for a launcher to actually hold the lock and start its session, rather
+  # than guessing with a fixed sleep. On a loaded runner the guess is what makes
+  # these tests flake.
+  # Waits for a launcher to actually hold the lock and start a session, rather
+  # than guessing with a fixed sleep, which is what makes these flake on a
+  # loaded runner.
+  wait_for_state() {
+    local dir=$1 want=$2 n
+    for n in $(seq 1 60); do
+      [[ "$(jq -r '.phase' "$dir/baseline.state" 2>/dev/null)" == "$want" ]] && return 0
+      sleep 0.2
+    done
+    return 1
+  }
+
   race_pids=()
   for race_n in 1 2; do
     OMARCHY_RDP_STATE_DIR="$race_dir" "$fake_bin/omarchy-rdp-launch" baseline \
       >"$race_dir/out$race_n" 2>&1 &
     race_pids+=($!)
   done
-  sleep 2
+  # One of them must get as far as writing "connecting"; the other is refused
+  # before it writes anything.
+  wait_for_state "$race_dir" connecting || bad "no launcher reached connecting"
 
   race_refused=$(cat "$race_dir"/out* 2>/dev/null | grep -c "already starting")
   if [[ "$race_refused" == "1" ]]; then ok; else bad "exactly one of two simultaneous launches must be refused, got $race_refused"; fi
@@ -672,7 +689,9 @@ if [[ -x /usr/bin/flock ]]; then
   # helper reported the session stopped.
   race_lock="$race_dir/baseline.lock"
   race_extra=0
-  for race_fd in /proc/[0-9]*/fd/9; do
+  # Every descriptor, not just 9: an inheritor can dup it elsewhere, and a scan
+  # fixed on 9 would miss that.
+  for race_fd in /proc/[0-9]*/fd/*; do
     [[ $(readlink "$race_fd" 2>/dev/null) == "$race_lock" ]] || continue
     race_pid=${race_fd#/proc/}; race_pid=${race_pid%%/*}
     # Compared against the actual pids, not the command line: a subshell forked

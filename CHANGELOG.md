@@ -22,6 +22,13 @@
   reported the session stopped: the panel would offer Connect and the launcher
   would refuse it. The lock now tracks the launcher alone, which is what owns
   the state file.
+- The lock is also closed on the `rdp_terminate` call. Its escalation subshell
+  sleeps for the grace period, so it inherited the lock and held it for ten
+  seconds after the launcher had exited and written `stopped`. Reconnecting in
+  that window, which is the obvious thing to do after disconnecting, was refused
+  for a session that had already ended, and the panel showed its no-status
+  fallback. Measured over repeated trials: the lock survived the launcher in
+  three of three runs before this, none of three after.
 - `flock` is required rather than optional. Skipping the lock when it is missing
   would silently leave exactly the race it closes, and it ships in util-linux,
   so its absence means a broken system, the same stance the launcher already
