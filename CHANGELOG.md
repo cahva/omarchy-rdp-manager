@@ -22,6 +22,10 @@
   reported the session stopped: the panel would offer Connect and the launcher
   would refuse it. The lock now tracks the launcher alone, which is what owns
   the state file.
+- `flock` is required rather than optional. Skipping the lock when it is missing
+  would silently leave exactly the race it closes, and it ships in util-linux,
+  so its absence means a broken system, the same stance the launcher already
+  takes on `jq`.
 
 - A failed launch could mark a healthy session dead
   ([#20](https://github.com/cahva/omarchy-rdp-manager/issues/20)). `die()` writes

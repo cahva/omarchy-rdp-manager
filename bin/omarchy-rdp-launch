@@ -360,15 +360,18 @@ if (( ! test_only )); then
   # there is no stale lock to reap and the file is never removed: unlinking a
   # lock another process may be holding is its own race.
   lock_file="$STATE_DIR/$id.lock"
-  if [[ -x $FLOCK ]]; then
-    exec 9>"$lock_file" || die "could not open $lock_file"
-    if ! "$FLOCK" -n 9; then
-      # Deliberately not through die(). The launcher that holds the lock may not
-      # have written its state file yet, so there would be nothing to protect,
-      # and recording this failure would land on a session about to start.
-      printf 'omarchy-rdp-launch: a session for %s is already starting\n' "$id" >&2
-      exit 1
-    fi
+  # Required, not optional. Skipping the lock when flock is missing would leave
+  # exactly the race this is here to close, silently. It ships in util-linux, so
+  # its absence is a broken system rather than a configuration to tolerate, and
+  # jq is treated the same way above.
+  [[ -x $FLOCK ]] || die "flock not found at $FLOCK (install util-linux)"
+  exec 9>"$lock_file" || die "could not open $lock_file"
+  if ! "$FLOCK" -n 9; then
+    # Deliberately not through die(). The launcher that holds the lock may not
+    # have written its state file yet, so there would be nothing to protect, and
+    # recording this failure would land on a session about to start.
+    printf 'omarchy-rdp-launch: a session for %s is already starting\n' "$id" >&2
+    exit 1
   fi
 
   # Checked before anything below touches the directory. One connection id means

@@ -675,8 +675,15 @@ if [[ -x /usr/bin/flock ]]; then
   for race_fd in /proc/[0-9]*/fd/9; do
     [[ $(readlink "$race_fd" 2>/dev/null) == "$race_lock" ]] || continue
     race_pid=${race_fd#/proc/}; race_pid=${race_pid%%/*}
-    # Only a launcher may hold it.
-    grep -qa 'omarchy-rdp-launch' "/proc/$race_pid/cmdline" 2>/dev/null || race_extra=$((race_extra + 1))
+    # Compared against the actual pids, not the command line: a subshell forked
+    # with & keeps its parent's argv, so the watcher reads as "omarchy-rdp-launch"
+    # too and a substring test would wave it through. The watcher inheriting the
+    # lock is the exact case this is meant to catch.
+    race_is_launcher=0
+    for race_known in "${race_pids[@]}"; do
+      [[ "$race_pid" == "$race_known" ]] && race_is_launcher=1
+    done
+    (( race_is_launcher )) || race_extra=$((race_extra + 1))
   done
   if [[ "$race_extra" == "0" ]]; then ok; else bad "$race_extra non-launcher process(es) inherited the lock"; fi
 
@@ -688,7 +695,7 @@ if [[ -x /usr/bin/flock ]]; then
   cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
   chmod +x "$fake_bin/omarchy-rdp-launch"
 else
-  bad "flock is missing, so launches cannot be serialised"
+  bad "flock is missing; the launcher now requires it and cannot serialise without it"
 fi
 
 # The exit-code table is written twice: as EXIT_MESSAGES in Model.js and as the
