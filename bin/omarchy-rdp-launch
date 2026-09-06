@@ -315,15 +315,23 @@ on_term() {
     # Escalates to SIGKILL after a grace period: FreeRDP acknowledges SIGTERM
     # and then does not necessarily exit. See rdp_terminate in lib-process.sh.
     #
-    # 9>&- closes the lock for this call, so the escalation subshell it forks
-    # does not inherit it. Descriptors survive across the fork just as they do
-    # across exec, and that subshell lives for the whole grace period (default
-    # 10s). Without this, disconnecting would hold the lock for those seconds
-    # after the launcher has already exited and written "stopped", and a
-    # reconnect in that window, the normal thing to do, would be refused with
-    # "already starting" for a session that had ended. Redirecting on the call
-    # keeps lib-process.sh untouched for its other uses.
-    rdp_terminate "$child" "$child_ticks" "$TERM_GRACE" 9>&- || true
+    # The lock is closed here for real, with exec, and not with a redirect on
+    # the call. `rdp_terminate ... 9>&-` looks equivalent and is not: bash
+    # implements a redirect scoped to a foreground function call by saving the
+    # descriptor to an internal high fd so it can restore it afterwards, and the
+    # escalation subshell forks during the call and inherits that copy. The copy
+    # is close-on-exec, so the exec'd sleep looks clean and so does every scan
+    # of fd 9, but the subshell itself is forked bash that never execs, and it
+    # held the lock (observed on fd 10) for the whole grace period. A reconnect
+    # right after disconnecting, the normal thing to do, was refused with
+    # "already starting" for a session that had ended.
+    #
+    # The launcher runs lockless for its last few milliseconds; the ownership
+    # check covers that window, since the state file still names a live pid.
+    # Closing a never-opened fd is a no-op, so a TERM during --test or
+    # --dry-run, where the lock was never taken, is safe.
+    exec 9>&-
+    rdp_terminate "$child" "$child_ticks" "$TERM_GRACE" || true
   fi
   if [[ ${watcher:-0} -gt 0 ]]; then
     kill -TERM "$watcher" 2>/dev/null || true

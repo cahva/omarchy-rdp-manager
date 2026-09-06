@@ -655,9 +655,6 @@ if [[ -x /usr/bin/flock ]]; then
   mkdir -p "$race_dir"
   chmod 700 "$race_dir"
 
-  # Wait for a launcher to actually hold the lock and start its session, rather
-  # than guessing with a fixed sleep. On a loaded runner the guess is what makes
-  # these tests flake.
   # Waits for a launcher to actually hold the lock and start a session, rather
   # than guessing with a fixed sleep, which is what makes these flake on a
   # loaded runner.
@@ -711,6 +708,50 @@ if [[ -x /usr/bin/flock ]]; then
   for race_p in "${race_pids[@]}"; do kill -TERM "$race_p" 2>/dev/null; done
   for race_p in "${race_pids[@]}"; do wait "$race_p" 2>/dev/null; done
   pkill -f "$race_stub" 2>/dev/null || true
+
+  # A reconnect straight after disconnecting must proceed. The first fix for
+  # this closed the lock on the rdp_terminate call with `9>&-`, which does not
+  # work: bash keeps a hidden restore copy of the descriptor for the duration of
+  # a foreground function call, the escalation subshell forks during the call
+  # and inherits the copy, and it held the lock for the whole grace period while
+  # every scan of fd 9 showed closed. Every disconnect opened the window, so
+  # this asserts the behaviour, not the lock state, and it fails against the
+  # redirect version deterministically.
+  #
+  # The reconnect is backgrounded. Run synchronously it blocks on the whole stub
+  # session, so the suite would crawl exactly and only when the code is right.
+  td_stub="$TMP/teardown-stub"
+  printf '#!/usr/bin/env bash\nexec sleep 60\n' > "$td_stub"
+  chmod +x "$td_stub"
+  cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+  sed -i "s|^XFREERDP=.*|XFREERDP=$td_stub|" "$fake_bin/omarchy-rdp-launch"
+  chmod +x "$fake_bin/omarchy-rdp-launch"
+  rm -rf "$race_dir"
+  mkdir -p "$race_dir"
+  chmod 700 "$race_dir"
+
+  # A short grace so each run's escalation subshell does not outlive the suite.
+  OMARCHY_RDP_STATE_DIR="$race_dir" OMARCHY_RDP_TERM_GRACE=2 \
+    "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>&1 &
+  td_first=$!
+  wait_for_state "$race_dir" connecting || bad "teardown: the first launch never reached connecting"
+  kill -TERM "$td_first" 2>/dev/null
+  wait "$td_first" 2>/dev/null
+
+  OMARCHY_RDP_STATE_DIR="$race_dir" OMARCHY_RDP_TERM_GRACE=2 \
+    "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>"$race_dir/reconnect.err" &
+  td_second=$!
+  td_verdict=""
+  for _ in $(seq 1 60); do
+    if grep -q "already starting" "$race_dir/reconnect.err" 2>/dev/null; then td_verdict=refused; break; fi
+    if [[ "$(jq -r '.phase' "$race_dir/baseline.state" 2>/dev/null)" == "connecting" ]]; then td_verdict=proceeded; break; fi
+    sleep 0.2
+  done
+  if [[ "$td_verdict" == "proceeded" ]]; then ok; else bad "a reconnect right after disconnect must proceed, got: ${td_verdict:-nothing within 12s}"; fi
+  kill -TERM "$td_second" 2>/dev/null
+  wait "$td_second" 2>/dev/null
+  pkill -f "$td_stub" 2>/dev/null || true
+
   cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
   chmod +x "$fake_bin/omarchy-rdp-launch"
 else

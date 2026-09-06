@@ -22,13 +22,18 @@
   reported the session stopped: the panel would offer Connect and the launcher
   would refuse it. The lock now tracks the launcher alone, which is what owns
   the state file.
-- The lock is also closed on the `rdp_terminate` call. Its escalation subshell
-  sleeps for the grace period, so it inherited the lock and held it for ten
-  seconds after the launcher had exited and written `stopped`. Reconnecting in
-  that window, which is the obvious thing to do after disconnecting, was refused
-  for a session that had already ended, and the panel showed its no-status
-  fallback. Measured over repeated trials: the lock survived the launcher in
-  three of three runs before this, none of three after.
+- The lock is also released before the teardown escalation. The escalation
+  subshell in `rdp_terminate` sleeps for the grace period, so it inherited the
+  lock and held it for ten seconds after the launcher had exited and written
+  `stopped`. Reconnecting in that window, which is the obvious thing to do after
+  disconnecting, was refused for a session that had already ended, and the panel
+  showed its no-status fallback. The first attempt closed the descriptor with a
+  redirect on the call, which does not work: bash keeps a hidden restore copy of
+  the descriptor for the call's duration, the subshell forks during the call and
+  inherits it, and every check of fd 9 showed closed while the lock lived on in
+  the copy. The lock is now closed with `exec` in the TERM handler, which keeps
+  no copy, and a test disconnects and immediately reconnects to hold the fix
+  down; it fails against the redirect version deterministically.
 - `flock` is required rather than optional. Skipping the lock when it is missing
   would silently leave exactly the race it closes, and it ships in util-linux,
   so its absence means a broken system, the same stance the launcher already
