@@ -20,7 +20,11 @@
   crashed session still gets replaced as before.
 - A second launch of an already-running connection is refused rather than
   half-started. One id means one session: two would share a `wm-class`, a state
-  file and a keyring entry.
+  file and a keyring entry. The check runs before the launcher clears
+  `<id>.established`, so a refused launch leaves the live session's marker alone
+  as well as its state file. Refusing after that cleanup would have protected one
+  file and destroyed the other, and the session would have reported a
+  connect-time failure when it later dropped.
 - The `c` and `t` shortcuts do nothing on a connected row, matching the Connect
   and Test buttons, which are hidden there. The buttons had the guard and the
   keyboard did not, which is how a duplicate launch was reachable from the panel

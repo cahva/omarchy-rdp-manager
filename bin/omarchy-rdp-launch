@@ -259,41 +259,6 @@ if (( dry_run )); then
 fi
 
 
-# ------------------------------------------------------------------ state file
-
-# Skipped entirely for --test. A probe is not a session: it needs no state
-# file, and running this for one is actively harmful, because the cleanup
-# below removes $id.established. Probing an id that is *currently connected*
-# would wipe the marker for that live session, and when it later dropped the
-# launcher would fall back to the connect-time message this whole change
-# exists to stop it printing. The Test button is hidden on live rows, but the
-# `t` shortcut and the CLI have no such guard.
-#
-# It also means --test still works where the state directory cannot be created.
-if (( ! test_only )); then
-
-  STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
-  # `mkdir -p -m` would set the mode on the deepest directory only, so chmod
-  # separately; rdp_state_dir_ok then confirms the result rather than assuming it.
-  mkdir -p "$STATE_DIR" || die "could not create $STATE_DIR"
-  chmod 700 "$STATE_DIR" || die "could not restrict $STATE_DIR to this user"
-  rdp_state_dir_ok "$STATE_DIR" || die "refusing to use state directory $STATE_DIR"
-  state_file="$STATE_DIR/$id.state"
-  log_file="$STATE_DIR/$id.log"
-  # Written by the watcher below once this session's window appears. A separate
-  # file rather than a field so the watcher never races write_state for the state
-  # file; write_state reads it and folds it into the JSON.
-  established_file="$STATE_DIR/$id.established"
-  rm -f "$established_file"
-  trap 'rm -f "$established_file"' EXIT
-  started_at=$(printf '%(%s)T' -1)
-
-  # Recorded so readers can tell this process from a later one that inherits its
-  # pid. Without it `kill -0` is the only check available, and that cannot
-  # distinguish our launcher from whatever recycled the number.
-  start_ticks=$(rdp_start_ticks $$) || die "cannot read /proc/$$/stat to identify this process"
-fi
-
 # Whether the state file currently belongs to a *different* launcher that is
 # still alive.
 #
@@ -357,13 +322,58 @@ on_term() {
 }
 trap on_term TERM INT
 
-# One connection id means one session: they would share a wm-class, a state file
-# and a keyring entry, so a second launcher cannot coexist with the first. The
-# panel hides Connect on a live row, but the `c` shortcut and this CLI have no
-# such guard. die() declines to overwrite a live launcher's state, so refusing
-# through it cannot damage the session being protected.
-if (( ! test_only )) && state_owned_by_live_launcher; then
-  die "a session for '$id' is already running"
+# ------------------------------------------------------------------ state file
+
+# Skipped entirely for --test. A probe is not a session: it needs no state
+# file, and running this for one is actively harmful, because the cleanup
+# below removes $id.established. Probing an id that is *currently connected*
+# would wipe the marker for that live session, and when it later dropped the
+# launcher would fall back to the connect-time message this whole change
+# exists to stop it printing. The Test button is hidden on live rows, but the
+# `t` shortcut and the CLI have no such guard.
+#
+# It also means --test still works where the state directory cannot be created.
+if (( ! test_only )); then
+
+  STATE_DIR=$(rdp_state_dir) || die "cannot determine a state directory"
+  # `mkdir -p -m` would set the mode on the deepest directory only, so chmod
+  # separately; rdp_state_dir_ok then confirms the result rather than assuming it.
+  mkdir -p "$STATE_DIR" || die "could not create $STATE_DIR"
+  chmod 700 "$STATE_DIR" || die "could not restrict $STATE_DIR to this user"
+  rdp_state_dir_ok "$STATE_DIR" || die "refusing to use state directory $STATE_DIR"
+  state_file="$STATE_DIR/$id.state"
+  log_file="$STATE_DIR/$id.log"
+  # Written by the watcher below once this session's window appears. A separate
+  # file rather than a field so the watcher never races write_state for the state
+  # file; write_state reads it and folds it into the JSON.
+  established_file="$STATE_DIR/$id.established"
+
+  # Checked before anything below touches the directory. One connection id means
+  # one session: two would share a wm-class, a state file and a keyring entry,
+  # so a second launcher cannot coexist with the first. The panel hides Connect
+  # on a live row, but the `c` shortcut and this CLI have no such guard.
+  #
+  # Order matters. The cleanup below removes $id.established, so refusing after
+  # it would protect the live session's state file while deleting the marker
+  # beside it, and that session would then report a connect-time failure when it
+  # later dropped: the exact thing this series keeps fixing.
+  if state_owned_by_live_launcher; then
+    die "a session for '$id' is already running"
+  fi
+
+  # Any leftover marker belongs to a previous run of *this* id whose launcher is
+  # gone, so it is ours to clear. It has to happen here rather than after the
+  # password lookup: a keyring failure would otherwise fold a stale marker into
+  # its own state file as established, and report "Connection lost" for a launch
+  # that never connected.
+  rm -f "$established_file"
+  trap 'rm -f "$established_file"' EXIT
+  started_at=$(printf '%(%s)T' -1)
+
+  # Recorded so readers can tell this process from a later one that inherits its
+  # pid. Without it `kill -0` is the only check available, and that cannot
+  # distinguish our launcher from whatever recycled the number.
+  start_ticks=$(rdp_start_ticks $$) || die "cannot read /proc/$$/stat to identify this process"
 fi
 
 # --------------------------------------------------------------- the password

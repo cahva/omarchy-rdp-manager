@@ -586,8 +586,14 @@ else
   bad "a failed launch overwrote a live session's state file" "$(cat "$fake_state/baseline.state")"
 fi
 
-# And a duplicate launch is refused outright rather than half-started.
+# And a duplicate launch is refused outright rather than half-started, without
+# touching either file. The marker matters as much as the state: the ownership
+# check used to sit after the cleanup that removes it, so the refusal protected
+# the state file and deleted the marker beside it. The live session would then
+# report a connect-time failure when it later dropped, which is the failure this
+# whole series exists to stop.
 forge_live_state "$owner_pid" "$owner_ticks"
+: > "$fake_state/baseline.established"
 state_before=$(md5sum "$fake_state/baseline.state" | cut -d' ' -f1)
 printf '#!/usr/bin/env bash\nprintf secret\n' > "$fake_bin/omarchy-rdp-secret"
 chmod +x "$fake_bin/omarchy-rdp-secret"
@@ -598,6 +604,7 @@ if [[ "$state_before" == "$(md5sum "$fake_state/baseline.state" | cut -d' ' -f1)
 else
   bad "the refusal overwrote the state file it was protecting"
 fi
+if [[ -e "$fake_state/baseline.established" ]]; then ok; else bad "the refusal deleted the live session's established marker"; fi
 
 # A stale file must not block anything. Same pid, wrong start time, which is
 # what a recycled pid looks like: rdp_same_process rejects it and the launch
@@ -608,6 +615,21 @@ chmod +x "$fake_bin/omarchy-rdp-secret"
 OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>&1
 stale_msg=$(jq -r '.message // ""' "$fake_state/baseline.state" 2>/dev/null)
 if [[ "$stale_msg" == *keyring* ]]; then ok; else bad "a stale state file blocked a launch, got: ${stale_msg:-<none>}"; fi
+
+# A launch that does proceed must still clear a leftover marker before it can be
+# folded into its own state. Otherwise a failure would be recorded as
+# established, and reported as "Connection lost" for a session that never
+# connected. This is why the cleanup stays above the password lookup.
+rm -rf "$fake_state"
+mkdir -p "$fake_state"
+chmod 700 "$fake_state"
+: > "$fake_state/baseline.established"
+OMARCHY_RDP_STATE_DIR="$fake_state" "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>&1
+# Read without `//`: jq's alternative operator substitutes for false as well as
+# null, so `.established // ""` turns a correct false into an empty string. That
+# is the same trap the launcher documents around bool_field.
+stale_marker=$(jq -r '.established' "$fake_state/baseline.state" 2>/dev/null)
+if [[ "$stale_marker" == "false" ]]; then ok; else bad "a stale marker was folded into a fresh launch's state, got: ${stale_marker:-<none>}"; fi
 
 kill -KILL "$owner_pid" 2>/dev/null
 wait "$owner_pid" 2>/dev/null
