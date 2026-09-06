@@ -37,6 +37,11 @@
   fell back to the connect-time message. Probes skip the state-file section
   entirely now, which also means `--test` works where no state directory can be
   created. Found in review, not by the tests.
+- The probe tests themselves dialled the fixture host. One of them ran the
+  launcher with FreeRDP unstubbed, so every run on a machine that has FreeRDP
+  installed fired a real `+auth-only` attempt at `10.0.0.5` as Administrator.
+  CI never saw it because no FreeRDP is installed there. Stubbing it out took
+  the suite from 27.6s to 12.4s, which was the connection timing out.
 - `--test` and `--dry-run` are probes rather than sessions, so a failure in
   either no longer leaves a state file behind for the panel to display.
 
