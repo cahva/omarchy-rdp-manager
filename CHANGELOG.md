@@ -7,6 +7,22 @@
 
 ### Fixed
 
+- Two launches of the same connection started at once both proceeded
+  ([#22](https://github.com/cahva/omarchy-rdp-manager/issues/22), found by
+  CodeRabbit reviewing #21). The ownership check added there is a read, so both
+  could pass it before either wrote a state file, and both then ran FreeRDP
+  against one `wm-class`, one state file and one keyring entry. Launches are now
+  serialised with a per-id `flock` taken before that check. The kernel releases
+  it when the process dies, `SIGKILL` included, so there is no stale lock to
+  reap, and the file is never unlinked because removing a lock someone may hold
+  is its own race.
+- The lock is closed in the FreeRDP child and in the window watcher. File
+  descriptors survive `exec`, so both would otherwise hold it, and an orphan
+  outliving a killed launcher would keep the id locked while the status helper
+  reported the session stopped: the panel would offer Connect and the launcher
+  would refuse it. The lock now tracks the launcher alone, which is what owns
+  the state file.
+
 - A failed launch could mark a healthy session dead
   ([#20](https://github.com/cahva/omarchy-rdp-manager/issues/20)). `die()` writes
   phase `exited`, and the status helper only re-verifies liveness for

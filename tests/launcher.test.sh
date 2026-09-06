@@ -636,6 +636,61 @@ wait "$owner_pid" 2>/dev/null
 cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
 chmod +x "$fake_bin/omarchy-rdp-launch"
 
+# Two launchers for one id must not both proceed (#22). The ownership check
+# above is a read, so before the lock both could pass it and then run FreeRDP
+# against one wm-class, one state file and one keyring entry. Reproduced by
+# starting two at once: both proceeded.
+if [[ -x /usr/bin/flock ]]; then
+  race_dir="$TMP/race"
+  race_stub="$TMP/race-stub"
+  # Lingers, so the winner still holds the lock while the loser tries.
+  printf '#!/usr/bin/env bash\nexec sleep 5\n' > "$race_stub"
+  chmod +x "$race_stub"
+  cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+  sed -i "s|^XFREERDP=.*|XFREERDP=$race_stub|" "$fake_bin/omarchy-rdp-launch"
+  chmod +x "$fake_bin/omarchy-rdp-launch"
+  printf '#!/usr/bin/env bash\nprintf secret\n' > "$fake_bin/omarchy-rdp-secret"
+  chmod +x "$fake_bin/omarchy-rdp-secret"
+  rm -rf "$race_dir"
+  mkdir -p "$race_dir"
+  chmod 700 "$race_dir"
+
+  race_pids=()
+  for race_n in 1 2; do
+    OMARCHY_RDP_STATE_DIR="$race_dir" "$fake_bin/omarchy-rdp-launch" baseline \
+      >"$race_dir/out$race_n" 2>&1 &
+    race_pids+=($!)
+  done
+  sleep 2
+
+  race_refused=$(cat "$race_dir"/out* 2>/dev/null | grep -c "already starting")
+  if [[ "$race_refused" == "1" ]]; then ok; else bad "exactly one of two simultaneous launches must be refused, got $race_refused"; fi
+
+  # The lock must belong to the launcher alone. fds survive exec, so without
+  # 9>&- the FreeRDP child and the watcher subshell would hold it too, and an
+  # orphan outliving a killed launcher would keep the id locked while the status
+  # helper reported the session stopped.
+  race_lock="$race_dir/baseline.lock"
+  race_extra=0
+  for race_fd in /proc/[0-9]*/fd/9; do
+    [[ $(readlink "$race_fd" 2>/dev/null) == "$race_lock" ]] || continue
+    race_pid=${race_fd#/proc/}; race_pid=${race_pid%%/*}
+    # Only a launcher may hold it.
+    grep -qa 'omarchy-rdp-launch' "/proc/$race_pid/cmdline" 2>/dev/null || race_extra=$((race_extra + 1))
+  done
+  if [[ "$race_extra" == "0" ]]; then ok; else bad "$race_extra non-launcher process(es) inherited the lock"; fi
+
+  # SIGTERM rather than SIGKILL: the launcher handles it, tears its child down
+  # and exits 0, so bash does not print a job-control "Killed" line mid-suite.
+  for race_p in "${race_pids[@]}"; do kill -TERM "$race_p" 2>/dev/null; done
+  for race_p in "${race_pids[@]}"; do wait "$race_p" 2>/dev/null; done
+  pkill -f "$race_stub" 2>/dev/null || true
+  cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
+  chmod +x "$fake_bin/omarchy-rdp-launch"
+else
+  bad "flock is missing, so launches cannot be serialised"
+fi
+
 # The exit-code table is written twice: as EXIT_MESSAGES in Model.js and as the
 # case statement in the launcher. Every entry above 143 was wrong once already,
 # because both were derived from "135 + low byte of ERRCONNECT_*" and the real
