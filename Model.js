@@ -274,15 +274,17 @@ function splitHostPort(rawHost) {
 // malformed endpoint. A host like that degrades to null (no gateway arg at
 // all), the same stance normalizeScale takes on a bad scale;
 // validateConnection reports both cases so the form path never gets this far.
-// The port must be a whole number in range — anything else, a fractional
-// value included, falls back to 443, which the launcher mirrors with an
-// integer-only check.
+// The port must be a whole number in range, arriving as a number or a numeric
+// string — anything else (a fractional value, a boolean, an array: Number()
+// happily coerces true to 1 and [9443] to 9443) falls back to 443, which the
+// launcher mirrors with an integer-only check on jq's rendering of the value.
 function normalizeGateway(gateway) {
   if (!gateway || typeof gateway !== "object") return null
   var host = trim(gateway.host)
   if (!host || /[\s,]/.test(host)) return null
   if (host.indexOf(":") !== -1 && !/^\[[^\]]+\]$/.test(host)) return null
-  var n = Number(gateway.port)
+  var raw = gateway.port
+  var n = typeof raw === "number" || typeof raw === "string" ? Number(raw) : NaN
   var port = !isFinite(n) || n !== Math.floor(n) || n < 1 || n > 65535 ? DEFAULT_GATEWAY_PORT : n
   return { host: host, port: port }
 }
@@ -373,14 +375,21 @@ function validateConnection(conn, takenIds) {
     // would otherwise ride along inside the host and reach FreeRDP as a
     // malformed endpoint. Only a bracketed IPv6 literal keeps its colons.
     else if (gwHost && gwHost.indexOf(":") !== -1 && !/^\[[^\]]+\]$/.test(gwHost)) {
-      errors.gateway = "Use host or host:port with a port from 1 to 65535"
+      errors.gateway = "Use host or host:port (wrap an IPv6 address in brackets)"
     }
     if (rawGw.port !== undefined && rawGw.port !== null) {
-      var gwPort = Number(rawGw.port)
+      // Type-gate before Number(): it coerces true to 1 and [9443] to 9443,
+      // which would let a hand-edited boolean or array pass without a word.
+      var rawGwPort = rawGw.port
+      var gwPort = typeof rawGwPort === "number" || typeof rawGwPort === "string" ? Number(rawGwPort) : NaN
       if (!isFinite(gwPort) || gwPort !== Math.floor(gwPort) || gwPort < 1 || gwPort > 65535) {
         errors.gateway = "Gateway port must be a whole number between 1 and 65535"
       }
     }
+  } else if (rawGw) {
+    // "gateway": "gw.example.com" is a plausible hand-edit given the form
+    // field takes a bare host; normalizeGateway() would drop it silently.
+    errors.gateway = 'Gateway must be an object: { "host": ..., "port": ... }'
   }
 
   // Only a typed or hand-edited value can be wrong here; the dropdown can only

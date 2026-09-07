@@ -261,6 +261,11 @@ test("normalizeGateway defaults and clamps the port to 443", function () {
   // so a fractional value must not survive here either.
   assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: 9443.5 }), { host: "gw", port: 443 })
   assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: "443,p:evil" }), { host: "gw", port: 443 })
+  // Number() coerces true to 1 and [9443] to 9443; the launcher's regex sees
+  // "true" and "[9443]" instead and rejects both, so accepting them here would
+  // make the dry-run preview disagree with the real launch.
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: true }), { host: "gw", port: 443 })
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: [9443] }), { host: "gw", port: 443 })
 })
 
 test("normalizeGateway drops a colon host it cannot mean, keeps a bracketed IPv6 one", function () {
@@ -412,6 +417,21 @@ test("validateConnection rejects a non-integer or nonnumeric gateway port", func
   var word = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
                                     gateway: { host: "gw", port: "abc" } }, [])
   assert.ok(word.errors.gateway)
+  // Number() would coerce these to 1 and 9443; the type gate must error first.
+  var bool = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                    gateway: { host: "gw", port: true } }, [])
+  assert.ok(bool.errors.gateway)
+  var arr = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                   gateway: { host: "gw", port: [9443] } }, [])
+  assert.ok(arr.errors.gateway)
+})
+
+test("validateConnection reports a gateway that is not an object", function () {
+  // A bare string is a plausible hand-edit, since the form field takes one;
+  // normalizeGateway() drops it silently, so validation must say something.
+  var r = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                 gateway: "gw.example.com" }, [])
+  assert.ok(r.errors.gateway)
 })
 
 test("validateConnection rejects the gateway host a bad host:port collapses into", function () {

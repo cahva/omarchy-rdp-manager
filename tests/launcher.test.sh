@@ -121,6 +121,10 @@ cat > "$TMP/connections.json" <<'JSON'
     { "id": "gateway-colon-host", "name": "Gateway colon host", "host": "10.0.0.20", "port": 3389,
       "user": "u", "domain": "",
       "gateway": { "host": "gw.example.com:abc", "port": 9443 },
+      "drives": [], "options": {} },
+    { "id": "gateway-bool-port", "name": "Gateway bool port", "host": "10.0.0.21", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": true },
       "drives": [], "options": {} }
   ]
 }
@@ -144,7 +148,7 @@ launcher_args() {
 
 export ROOT
 
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port; do
   a=$(launcher_args "$id")
   b=$(model_args "$id")
   if [[ "$a" == "$b" ]]; then
@@ -166,7 +170,7 @@ if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got 
 if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port; do
   if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
     ok
   else
@@ -176,7 +180,7 @@ done
 
 # Sizing. FreeRDP exits 22 when /smart-sizing and +dynamic-resolution are both
 # present, so "exactly one of them" is an invariant, not a style preference.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port; do
   a=$(launcher_args "$id")
   n=$(grep -c '^/size:' <<<"$a")
   if [[ "$n" == "1" ]]; then ok; else bad "'$id' must emit exactly one /size:, got $n" "$a"; fi
@@ -218,6 +222,9 @@ if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-evil-port
 if grep -q -- ',p:' <<<"$(launcher_args gateway-evil-port)"; then bad "a p: sub-option leaked in through the gateway port" "$(launcher_args gateway-evil-port)"; else ok; fi
 # A colon host is an unsplit host:port typo, not an endpoint to guess at.
 if grep -q '^/gateway:' <<<"$(launcher_args gateway-colon-host)"; then bad "an unsplittable colon gateway host must be dropped" "$(launcher_args gateway-colon-host)"; else ok; fi
+# JSON true renders as "true" for jq and coerces to 1 for Number(); both sides
+# must treat it as invalid or the dry-run preview lies about the real launch.
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-bool-port)"; then ok; else bad "a boolean gateway port must fall back to the hidden default" "$(launcher_args gateway-bool-port)"; fi
 # The password invariant holds on the gateway path too: exactly one /p: line,
 # redacted, and no p: smuggled in as a /gateway: sub-option.
 gw_args=$(launcher_args gateway)
