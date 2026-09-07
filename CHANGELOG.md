@@ -1,7 +1,9 @@
 # Changelog
 
-<!-- Entries land here as they merge. The release commit renames this heading to
-     the version and bumps manifest.json, so the number is chosen from what
+<!-- Entries are drafted in each PR's "Changes to be added to the changelog"
+     section and land here in a release-prep PR, so parallel branches never
+     conflict over this file. The release commit renames this heading to the
+     version and bumps manifest.json, so the number is chosen from what
      actually shipped rather than guessed when the branch was opened. -->
 ## Unreleased
 
