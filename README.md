@@ -141,6 +141,7 @@ contains a password** — only a `"secret": "keyring"` marker.
       "port": 3389,
       "user": "Administrator",
       "domain": "",
+      "gateway": null,
       "secret": "keyring",
       "drives": [
         { "name": "home", "path": "/home/you/projects/shared" }
@@ -170,6 +171,16 @@ Edits are picked up live — no reload needed. Notes:
   literal works too (`[::1]:3389`); an unbracketed one (`2001:db8::1`) is left
   alone rather than guessed at, since a bare IPv6 address is indistinguishable
   from `host:port` once the colon count goes above one.
+- `gateway` is an optional RD Gateway to tunnel the session through, for hosts
+  that are not reachable directly (behind a VPN, say): `null` for a direct
+  connection, or `{ "host": "gateway.example.com", "port": 443 }`. The port
+  defaults to 443 and the Gateway form field accepts `host` or `host:port`,
+  empty meaning direct. The gateway signs in with the **same** user, domain
+  and password as the connection itself (FreeRDP's same-credentials mode);
+  separate gateway credentials are not supported yet. The target `host` is
+  resolved and reached by the gateway, not by this machine, so it can be a
+  name only the gateway's network knows. The gateway's TLS certificate is
+  checked under the same `cert` policy as the connection.
 - `cert` is `tofu` (trust on first use), `ignore`, or `deny`. TOFU state is
   FreeRDP's own, in `~/.config/freerdp/server/`.
 - `resolution` is `auto` or `WIDTHxHEIGHT`. `auto` matches the monitor the

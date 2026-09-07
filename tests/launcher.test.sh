@@ -97,7 +97,19 @@ cat > "$TMP/connections.json" <<'JSON'
       "drives": [], "options": { "scale": 180 } },
     { "id": "bad-scale", "name": "Bad scale", "host": "10.0.0.14", "port": 3389,
       "user": "u", "domain": "",
-      "drives": [], "options": { "scale": "250" } }
+      "drives": [], "options": { "scale": "250" } },
+    { "id": "gateway", "name": "Gateway", "host": "10.0.0.15", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": 443 },
+      "drives": [], "options": {} },
+    { "id": "gateway-port", "name": "Gateway port", "host": "10.0.0.16", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": 9443 },
+      "drives": [], "options": {} },
+    { "id": "gateway-invalid", "name": "Gateway invalid", "host": "10.0.0.17", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw,p:evil", "port": 9443 },
+      "drives": [], "options": {} }
   ]
 }
 JSON
@@ -120,7 +132,7 @@ launcher_args() {
 
 export ROOT
 
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid; do
   a=$(launcher_args "$id")
   b=$(model_args "$id")
   if [[ "$a" == "$b" ]]; then
@@ -142,7 +154,7 @@ if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got 
 if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid; do
   if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
     ok
   else
@@ -152,7 +164,7 @@ done
 
 # Sizing. FreeRDP exits 22 when /smart-sizing and +dynamic-resolution are both
 # present, so "exactly one of them" is an invariant, not a style preference.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid; do
   a=$(launcher_args "$id")
   n=$(grep -c '^/size:' <<<"$a")
   if [[ "$n" == "1" ]]; then ok; else bad "'$id' must emit exactly one /size:, got $n" "$a"; fi
@@ -177,6 +189,23 @@ if grep -qx -- '/size:2560x1440' <<<"$(launcher_args fixed-auto)"; then ok; else
 if grep -qx -- '/size:2560x1440' <<<"$(launcher_args bad-resolution)"; then ok; else bad "an out-of-range resolution must fall back to auto"; fi
 # The legacy boolean still selects the mode it used to mean.
 if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args baseline)"; then ok; else bad "legacy dynamicResolution:true must still mean dynamic"; fi
+
+# RD Gateway. A bare g: sub-option keeps FreeRDP in same-credentials mode, so
+# the line must never grow u:/d:/p: sub-options, port 443 stays hidden like
+# 3389 does in /v:, and a host that could inject sub-options (comma or
+# whitespace) must not produce a /gateway: line at all.
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway)"; then ok; else bad "gateway must emit a bare /gateway:g: line" "$(launcher_args gateway)"; fi
+if grep -q '^/gateway:.*:443$' <<<"$(launcher_args gateway)"; then bad "default gateway port 443 must be hidden"; else ok; fi
+if grep -qx -- '/gateway:g:gw.example.com:9443' <<<"$(launcher_args gateway-port)"; then ok; else bad "non-default gateway port must be included" "$(launcher_args gateway-port)"; fi
+if grep -q '^/gateway:' <<<"$(launcher_args baseline)"; then bad "a connection without a gateway must not emit /gateway:"; else ok; fi
+if grep -q '^/gateway:' <<<"$(launcher_args gateway-invalid)"; then bad "an injectable gateway host must be dropped" "$(launcher_args gateway-invalid)"; else ok; fi
+# The password invariant holds on the gateway path too: exactly one /p: line,
+# redacted, and no p: smuggled in as a /gateway: sub-option.
+gw_args=$(launcher_args gateway)
+count=$(grep -c '^/p:' <<<"$gw_args")
+if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line for gateway, got $count"; fi
+if grep -qx -- '/p:<redacted>' <<<"$gw_args"; then ok; else bad "the gateway dry run must redact the password"; fi
+if grep -q -- ',p:' <<<"$gw_args"; then bad "a p: sub-option leaked into the gateway line" "$gw_args"; else ok; fi
 
 # Port, domain and drive fan-out.
 if grep -qx -- '/scale:180' <<<"$(launcher_args hidpi)"; then ok; else bad "explicit scale must be passed to FreeRDP" "$(launcher_args hidpi)"; fi

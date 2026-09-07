@@ -241,6 +241,34 @@ test("normalizePort clamps nonsense to the default", function () {
   assert.strictEqual(M.normalizePort("4489"), 4489)
 })
 
+test("normalizeGateway returns null for anything but a usable object", function () {
+  assert.strictEqual(M.normalizeGateway(undefined), null)
+  assert.strictEqual(M.normalizeGateway(null), null)
+  assert.strictEqual(M.normalizeGateway("gw.example.com"), null)
+  assert.strictEqual(M.normalizeGateway(443), null)
+  assert.strictEqual(M.normalizeGateway({}), null)
+  assert.strictEqual(M.normalizeGateway({ host: "   " }), null)
+})
+
+test("normalizeGateway defaults and clamps the port to 443", function () {
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw" }), { host: "gw", port: 443 })
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: 9443 }), { host: "gw", port: 9443 })
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: 99999 }), { host: "gw", port: 443 })
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: "abc" }), { host: "gw", port: 443 })
+})
+
+test("normalizeGateway refuses a host that could inject /gateway: sub-options", function () {
+  // The host lands inside the comma-separated /gateway: value, so a comma or
+  // whitespace in it would smuggle extra sub-options (e.g. a p: password).
+  assert.strictEqual(M.normalizeGateway({ host: "gw,p:evil" }), null)
+  assert.strictEqual(M.normalizeGateway({ host: "gw p:evil" }), null)
+})
+
+test("normalizeGateway drops unknown keys", function () {
+  var gw = M.normalizeGateway({ host: "gw", port: 9443, password: "hunter2", p: "hunter2" })
+  assert.deepStrictEqual(gw, { host: "gw", port: 9443 })
+})
+
 test("normalizeDrives drops half-filled rows", function () {
   var drives = [{ name: "home", path: "/tmp" }, { name: "", path: "/tmp" }, { name: "x", path: "" }]
   assert.deepStrictEqual(M.normalizeDrives(drives), [{ name: "home", path: "/tmp" }])
@@ -284,6 +312,7 @@ test("parseConfig backfills an empty name from the id", function () {
 
 test("serializeConfig round-trips through parseConfig", function () {
   var conn = { id: "a", name: "A", host: "h", port: 4489, user: "u", domain: "D",
+               gateway: { host: "gw.example.com", port: 9443 },
                secret: "keyring", drives: [{ name: "home", path: "/tmp" }],
                options: { dynamicResolution: false, clipboard: false, cert: "deny" } }
   var again = M.parseConfig(M.serializeConfig([conn])).connections[0]
@@ -342,6 +371,29 @@ test("validateConnection rejects an id already in use", function () {
 test("validateConnection reports an out-of-range port from a hand-edited file", function () {
   var r = M.validateConnection({ id: "a", name: "A", host: "h", user: "u", port: 99999 }, [])
   assert.ok(r.errors.port)
+})
+
+test("validateConnection rejects a gateway host with a comma or whitespace", function () {
+  // normalizeGateway() would silently drop these; the form must hear about it.
+  var comma = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                     gateway: { host: "gw,p:evil" } }, [])
+  assert.ok(comma.errors.gateway)
+  var space = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                     gateway: { host: "gw p:evil" } }, [])
+  assert.ok(space.errors.gateway)
+})
+
+test("validateConnection reports an out-of-range gateway port", function () {
+  var r = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                 gateway: { host: "gw", port: 99999 } }, [])
+  assert.ok(r.errors.gateway)
+})
+
+test("validateConnection accepts a connection with a valid gateway", function () {
+  var r = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                 gateway: { host: "gw.example.com", port: 9443 } }, [])
+  assert.deepStrictEqual(r.errors, {})
+  assert.strictEqual(r.ok, true)
 })
 
 // ------------------------------------------------------------ argument building
@@ -439,6 +491,41 @@ test("buildArgs omits /d: when there is no domain", function () {
   assert.ok(withDomain.indexOf("/d:CORP") !== -1)
 })
 
+test("buildArgs places /gateway: after the identity block, hiding port 443", function () {
+  // The position is load-bearing: the launcher builds the same list in the
+  // same order and tests/launcher.test.sh diffs the two line-for-line.
+  var conn = { id: "a", name: "A", host: "h", user: "u", domain: "CORP",
+               gateway: { host: "gw.example.com" } }
+  assert.deepStrictEqual(M.buildArgs(conn), [
+    "/v:h",
+    "/u:u",
+    "/d:CORP",
+    // Bare g: — no u:/d:/p: sub-options — is FreeRDP's same-credentials mode.
+    "/gateway:g:gw.example.com",
+    "/cert:tofu",
+    "+clipboard",
+    "/size:1920x1080",
+    "+dynamic-resolution",
+    "/wm-class:omarchy-rdp-a",
+    "/t:A"
+  ])
+})
+
+test("buildArgs shows a non-default gateway port and omits the arg entirely without a gateway", function () {
+  var withPort = M.buildArgs({ id: "a", name: "A", host: "h", user: "u",
+                               gateway: { host: "gw.example.com", port: 9443 } })
+  assert.ok(withPort.indexOf("/gateway:g:gw.example.com:9443") !== -1)
+  var direct = M.buildArgs({ id: "a", name: "A", host: "h", user: "u" })
+  assert.ok(!direct.some(function (a) { return a.indexOf("/gateway:") === 0 }))
+})
+
+test("buildArgs drops a gateway whose host would inject sub-options", function () {
+  var args = M.buildArgs({ id: "a", name: "A", host: "h", user: "u",
+                           gateway: { host: "gw,p:hunter2" } })
+  assert.ok(!args.some(function (a) { return a.indexOf("/gateway:") === 0 }),
+    "an injectable gateway host must not reach the command line: " + args.join(" "))
+})
+
 test("buildArgs emits one /drive: per mapping", function () {
   var args = M.buildArgs({ id: "a", name: "A", host: "h", user: "u", drives: [
     { name: "home", path: "/a" }, { name: "work", path: "/b" }
@@ -457,11 +544,15 @@ test("buildArgs NEVER contains a password", function () {
   // The password is appended by the launcher alone, so nothing that renders or
   // logs this list can leak it. This is the invariant the whole design rests on.
   var conn = { id: "a", name: "A", host: "h", user: "u", password: "hunter2",
-               secret: "hunter2", options: { cert: "tofu" } }
+               secret: "hunter2", options: { cert: "tofu" },
+               // A gateway object is the newest place a secret could try to
+               // ride in: as an extra key, or as a p: sub-option in the host.
+               gateway: { host: "gw", password: "hunter2", p: "hunter2" } }
   var args = M.buildArgs(conn)
   args.forEach(function (a) {
     assert.ok(a.indexOf("/p:") !== 0, "buildArgs emitted a password argument: " + a)
     assert.ok(a.indexOf("hunter2") === -1, "password leaked into: " + a)
+    assert.ok(a.indexOf(",p:") === -1, "a p: sub-option smuggled into: " + a)
   })
 })
 

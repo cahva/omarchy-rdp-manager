@@ -130,6 +130,21 @@ else
 fi
 args+=("/u:$user")
 [[ -n "$domain" ]] && args+=("/d:$domain")
+# Optional RD Gateway. A bare `g:` sub-option (no u:/d:/p:) selects FreeRDP's
+# same-credentials mode, so the gateway authenticates with the connection's
+# own user/domain/password and no secret is added here. The /gateway: value is
+# comma-separated, so a host carrying a comma or whitespace is sub-option
+# injection — skip it, exactly as Model.js normalizeGateway() degrades it to
+# null, or the parity test would split.
+gw_host=$(field gateway.host)
+gw_port=$(field gateway.port 443)
+if [[ -n "$gw_host" && "$gw_host" != *[[:space:],]* ]]; then
+  if [[ "$gw_port" == "443" || -z "$gw_port" ]]; then
+    args+=("/gateway:g:$gw_host")
+  else
+    args+=("/gateway:g:$gw_host:$gw_port")
+  fi
+fi
 args+=("/cert:$cert")
 
 # ---------------------------------------------------------------- sizing
