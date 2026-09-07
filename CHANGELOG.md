@@ -7,6 +7,14 @@
 
 ### Fixed
 
+- The Disconnect and Cancel tooltips still advertised `(x)`
+  ([#24](https://github.com/cahva/omarchy-rdp-manager/issues/24)). The rebind to
+  `s` in #15 updated the key handler, the help footer and the README, but missed
+  the tooltip, so it recommended the one key the shared key catcher turns into
+  delete: following the hint on a live session opened the delete confirmation
+  for that connection. Tooltip hints are now under the same test that already
+  ties the footer to the handler, which is how the footer survived #15 and the
+  tooltip did not.
 - Two launches of the same connection started at once both proceeded
   ([#22](https://github.com/cahva/omarchy-rdp-manager/issues/22), found by
   CodeRabbit reviewing #21). The ownership check added there is a read, so both
