@@ -5,9 +5,38 @@
      conflict over this file. The release commit renames this heading to the
      version and bumps manifest.json, so the number is chosen from what
      actually shipped rather than guessed when the branch was opened. -->
-## Unreleased
+## 0.4.0
+
+### Changed
+
+- Changelog entries are now drafted in each PR's "Changes to be added to the
+  changelog" section and collected into this file by a release-prep PR like the
+  one that produced this heading
+  ([#26](https://github.com/cahva/omarchy-rdp-manager/pull/26)). Parallel PRs
+  used to conflict over the Unreleased section, since every fix appended to the
+  same lines.
 
 ### Fixed
+
+- Saving a password only worked on the first try after a shell restart
+  ([#17](https://github.com/cahva/omarchy-rdp-manager/pull/17), reported and
+  fixed by @dozjin). The store process writes the password to the helper's
+  stdin and closes the pipe by flipping `stdinEnabled` off, and nothing ever
+  flipped it back, so every later save sent nothing and secret-tool sat on an
+  open, silent stdin until the 20 second cap fired and blamed the keyring. The
+  flag is now reset before each run.
+- Storing a password from a terminal hung and then blamed the keyring too.
+  `omarchy-rdp-secret store <id>`, the command the launcher's own error message
+  recommends, never printed its prompt: secret-tool prompts via `/dev/tty` when
+  stdin is a tty, and `timeout(1)` moves it into a background process group, so
+  the terminal stopped it with `SIGTTOU` at the echo-off `tcsetattr` before the
+  prompt appeared. secret-tool now runs under `setsid -w`: with no controlling
+  terminal there is no tty job control, the prompt falls back to stdin and
+  stderr with echo still off, and `-w` guarantees the exit status the panel
+  branches on even if setsid ever has to fork, which at this call site it does
+  not.
+- A stale failure banner from an earlier save attempt no longer outlives the
+  retry that succeeded: the form clears it when a new save starts.
 
 - The Disconnect and Cancel tooltips still advertised `(x)`
   ([#24](https://github.com/cahva/omarchy-rdp-manager/issues/24)). The rebind to
