@@ -253,8 +253,24 @@ test("normalizeGateway returns null for anything but a usable object", function 
 test("normalizeGateway defaults and clamps the port to 443", function () {
   assert.deepStrictEqual(M.normalizeGateway({ host: "gw" }), { host: "gw", port: 443 })
   assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: 9443 }), { host: "gw", port: 9443 })
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: "9443" }), { host: "gw", port: 9443 })
   assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: 99999 }), { host: "gw", port: 443 })
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: 0 }), { host: "gw", port: 443 })
   assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: "abc" }), { host: "gw", port: 443 })
+  // Whole numbers only: the launcher mirrors this with an integer-only check,
+  // so a fractional value must not survive here either.
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: 9443.5 }), { host: "gw", port: 443 })
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: "443,p:evil" }), { host: "gw", port: 443 })
+})
+
+test("normalizeGateway drops a colon host it cannot mean, keeps a bracketed IPv6 one", function () {
+  // "gw:abc" and "gw:99999" are host:port typos splitHostPort could not split;
+  // retaining them would hand FreeRDP a malformed /gateway: endpoint.
+  assert.strictEqual(M.normalizeGateway({ host: "gw:abc" }), null)
+  assert.strictEqual(M.normalizeGateway({ host: "gw:99999" }), null)
+  assert.strictEqual(M.normalizeGateway({ host: "2001:db8::1" }), null)
+  assert.deepStrictEqual(M.normalizeGateway({ host: "[2001:db8::1]", port: 9443 }),
+    { host: "[2001:db8::1]", port: 9443 })
 })
 
 test("normalizeGateway refuses a host that could inject /gateway: sub-options", function () {
@@ -387,6 +403,30 @@ test("validateConnection reports an out-of-range gateway port", function () {
   var r = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
                                  gateway: { host: "gw", port: 99999 } }, [])
   assert.ok(r.errors.gateway)
+})
+
+test("validateConnection rejects a non-integer or nonnumeric gateway port", function () {
+  var frac = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                    gateway: { host: "gw", port: 9443.5 } }, [])
+  assert.ok(frac.errors.gateway)
+  var word = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                    gateway: { host: "gw", port: "abc" } }, [])
+  assert.ok(word.errors.gateway)
+})
+
+test("validateConnection rejects the gateway host a bad host:port collapses into", function () {
+  // Typing "gw:abc" or "gw:99999" into the form leaves splitHostPort unable to
+  // split, so the whole string arrives as the host — that must be an error,
+  // not a silent default-port connection to a malformed endpoint.
+  var word = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                    gateway: { host: "gw:abc" } }, [])
+  assert.ok(word.errors.gateway)
+  var range = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                     gateway: { host: "gw:99999" } }, [])
+  assert.ok(range.errors.gateway)
+  var v6 = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                  gateway: { host: "[2001:db8::1]", port: 9443 } }, [])
+  assert.deepStrictEqual(v6.errors, {})
 })
 
 test("validateConnection accepts a connection with a valid gateway", function () {
@@ -524,6 +564,19 @@ test("buildArgs drops a gateway whose host would inject sub-options", function (
                            gateway: { host: "gw,p:hunter2" } })
   assert.ok(!args.some(function (a) { return a.indexOf("/gateway:") === 0 }),
     "an injectable gateway host must not reach the command line: " + args.join(" "))
+})
+
+test("buildArgs never emits a malformed gateway endpoint", function () {
+  // A colon host is an unsplit host:port typo; a bad port falls back to the
+  // hidden 443. Either way no malformed endpoint may reach FreeRDP.
+  var colon = M.buildArgs({ id: "a", name: "A", host: "h", user: "u",
+                            gateway: { host: "gw:abc" } })
+  assert.ok(!colon.some(function (a) { return a.indexOf("/gateway:") === 0 }),
+    "an unsplit host:port must not reach the command line: " + colon.join(" "))
+  var badPort = M.buildArgs({ id: "a", name: "A", host: "h", user: "u",
+                              gateway: { host: "gw.example.com", port: "abc" } })
+  assert.ok(badPort.indexOf("/gateway:g:gw.example.com") !== -1,
+    "a bad port must fall back to the hidden default: " + badPort.join(" "))
 })
 
 test("buildArgs emits one /drive: per mapping", function () {

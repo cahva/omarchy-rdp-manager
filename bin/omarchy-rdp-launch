@@ -134,12 +134,22 @@ args+=("/u:$user")
 # same-credentials mode, so the gateway authenticates with the connection's
 # own user/domain/password and no secret is added here. The /gateway: value is
 # comma-separated, so a host carrying a comma or whitespace is sub-option
-# injection — skip it, exactly as Model.js normalizeGateway() degrades it to
-# null, or the parity test would split.
+# injection, and a colon outside a bracketed IPv6 literal is an unsplittable
+# "gw:abc" typo — skip both, exactly as Model.js normalizeGateway() degrades
+# them to null, or the parity test would split. The port is emitted only when
+# it is a whole in-range number other than 443; everything else (including a
+# string that could smuggle its own sub-options) falls back to the hidden
+# default, again mirroring normalizeGateway().
 gw_host=$(field gateway.host)
 gw_port=$(field gateway.port 443)
-if [[ -n "$gw_host" && "$gw_host" != *[[:space:],]* ]]; then
-  if [[ "$gw_port" == "443" || -z "$gw_port" ]]; then
+if [[ "$gw_port" =~ ^[0-9]{1,5}$ ]] && (( 10#$gw_port >= 1 && 10#$gw_port <= 65535 )); then
+  gw_port=$((10#$gw_port))
+else
+  gw_port=443
+fi
+if [[ -n "$gw_host" && "$gw_host" != *[[:space:],]* ]] \
+   && { [[ "$gw_host" != *:* ]] || [[ "$gw_host" =~ ^\[[^]]+\]$ ]]; }; then
+  if (( gw_port == 443 )); then
     args+=("/gateway:g:$gw_host")
   else
     args+=("/gateway:g:$gw_host:$gw_port")

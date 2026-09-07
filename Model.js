@@ -268,15 +268,22 @@ function splitHostPort(rawHost) {
 // The host lands inside FreeRDP's consolidated `/gateway:g:...` option, whose
 // sub-options are comma-separated, so a comma (or whitespace) in the host is
 // sub-option injection — e.g. "gw,p:x" would smuggle a `p:` gateway password.
-// A host like that degrades to null here (no gateway arg at all), the same
-// stance normalizeScale takes on a bad scale; validateConnection reports it
-// so the form path never gets this far.
+// A colon is rejected too, except in a bracketed IPv6 literal: the port has
+// its own field here, so a colon in the host is a "gw:abc" or "gw:99999" typo
+// that splitHostPort could not split, and emitting it would hand FreeRDP a
+// malformed endpoint. A host like that degrades to null (no gateway arg at
+// all), the same stance normalizeScale takes on a bad scale;
+// validateConnection reports both cases so the form path never gets this far.
+// The port must be a whole number in range — anything else, a fractional
+// value included, falls back to 443, which the launcher mirrors with an
+// integer-only check.
 function normalizeGateway(gateway) {
   if (!gateway || typeof gateway !== "object") return null
   var host = trim(gateway.host)
   if (!host || /[\s,]/.test(host)) return null
+  if (host.indexOf(":") !== -1 && !/^\[[^\]]+\]$/.test(host)) return null
   var n = Number(gateway.port)
-  var port = !isFinite(n) || n < 1 || n > 65535 ? DEFAULT_GATEWAY_PORT : Math.floor(n)
+  var port = !isFinite(n) || n !== Math.floor(n) || n < 1 || n > 65535 ? DEFAULT_GATEWAY_PORT : n
   return { host: host, port: port }
 }
 
@@ -362,9 +369,17 @@ function validateConnection(conn, takenIds) {
   if (rawGw && typeof rawGw === "object") {
     var gwHost = trim(rawGw.host)
     if (gwHost && /[\s,]/.test(gwHost)) errors.gateway = "Gateway host cannot contain spaces or commas"
+    // A colon that splitHostPort could not split off ("gw:abc", "gw:99999")
+    // would otherwise ride along inside the host and reach FreeRDP as a
+    // malformed endpoint. Only a bracketed IPv6 literal keeps its colons.
+    else if (gwHost && gwHost.indexOf(":") !== -1 && !/^\[[^\]]+\]$/.test(gwHost)) {
+      errors.gateway = "Use host or host:port with a port from 1 to 65535"
+    }
     if (rawGw.port !== undefined && rawGw.port !== null) {
       var gwPort = Number(rawGw.port)
-      if (!isFinite(gwPort) || gwPort < 1 || gwPort > 65535) errors.gateway = "Gateway port must be between 1 and 65535"
+      if (!isFinite(gwPort) || gwPort !== Math.floor(gwPort) || gwPort < 1 || gwPort > 65535) {
+        errors.gateway = "Gateway port must be a whole number between 1 and 65535"
+      }
     }
   }
 

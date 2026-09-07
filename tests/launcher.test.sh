@@ -109,6 +109,18 @@ cat > "$TMP/connections.json" <<'JSON'
     { "id": "gateway-invalid", "name": "Gateway invalid", "host": "10.0.0.17", "port": 3389,
       "user": "u", "domain": "",
       "gateway": { "host": "gw,p:evil", "port": 9443 },
+      "drives": [], "options": {} },
+    { "id": "gateway-bad-port", "name": "Gateway bad port", "host": "10.0.0.18", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": "abc" },
+      "drives": [], "options": {} },
+    { "id": "gateway-evil-port", "name": "Gateway evil port", "host": "10.0.0.19", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": "443,p:evil" },
+      "drives": [], "options": {} },
+    { "id": "gateway-colon-host", "name": "Gateway colon host", "host": "10.0.0.20", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com:abc", "port": 9443 },
       "drives": [], "options": {} }
   ]
 }
@@ -132,7 +144,7 @@ launcher_args() {
 
 export ROOT
 
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host; do
   a=$(launcher_args "$id")
   b=$(model_args "$id")
   if [[ "$a" == "$b" ]]; then
@@ -154,7 +166,7 @@ if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got 
 if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host; do
   if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
     ok
   else
@@ -164,7 +176,7 @@ done
 
 # Sizing. FreeRDP exits 22 when /smart-sizing and +dynamic-resolution are both
 # present, so "exactly one of them" is an invariant, not a style preference.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host; do
   a=$(launcher_args "$id")
   n=$(grep -c '^/size:' <<<"$a")
   if [[ "$n" == "1" ]]; then ok; else bad "'$id' must emit exactly one /size:, got $n" "$a"; fi
@@ -199,6 +211,13 @@ if grep -q '^/gateway:.*:443$' <<<"$(launcher_args gateway)"; then bad "default 
 if grep -qx -- '/gateway:g:gw.example.com:9443' <<<"$(launcher_args gateway-port)"; then ok; else bad "non-default gateway port must be included" "$(launcher_args gateway-port)"; fi
 if grep -q '^/gateway:' <<<"$(launcher_args baseline)"; then bad "a connection without a gateway must not emit /gateway:"; else ok; fi
 if grep -q '^/gateway:' <<<"$(launcher_args gateway-invalid)"; then bad "an injectable gateway host must be dropped" "$(launcher_args gateway-invalid)"; else ok; fi
+# A port that is not a whole in-range number falls back to the hidden 443, so
+# neither garbage nor a comma-smuggled sub-option can ride in through the port.
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-bad-port)"; then ok; else bad "a nonnumeric gateway port must fall back to the hidden default" "$(launcher_args gateway-bad-port)"; fi
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-evil-port)"; then ok; else bad "an injectable gateway port must fall back to the hidden default" "$(launcher_args gateway-evil-port)"; fi
+if grep -q -- ',p:' <<<"$(launcher_args gateway-evil-port)"; then bad "a p: sub-option leaked in through the gateway port" "$(launcher_args gateway-evil-port)"; else ok; fi
+# A colon host is an unsplit host:port typo, not an endpoint to guess at.
+if grep -q '^/gateway:' <<<"$(launcher_args gateway-colon-host)"; then bad "an unsplittable colon gateway host must be dropped" "$(launcher_args gateway-colon-host)"; else ok; fi
 # The password invariant holds on the gateway path too: exactly one /p: line,
 # redacted, and no p: smuggled in as a /gateway: sub-option.
 gw_args=$(launcher_args gateway)
