@@ -320,6 +320,27 @@ test("the help footer lists exactly the keys that are bound", function () {
   })
 })
 
+test("tooltip key hints refer to keys that are actually bound", function () {
+  // The rebind in #15 updated the handler, the footer and the README, but not
+  // the Disconnect tooltip, which kept advertising (x) for two releases: the
+  // one key the catcher turns into delete (#24). Tooltips join the same
+  // contract the footer already has.
+  var src = panelSource()
+  var bound = boundKeys(src)
+  var hints = []
+  src.split("\n").forEach(function (line) {
+    if (line.indexOf("tooltipText:") === -1) return
+    var re = /\(([a-z])\)/g
+    var m
+    while ((m = re.exec(line)) !== null) hints.push(m[1])
+  })
+  assert.ok(hints.length >= 5, "expected to find tooltip key hints, found " + hints.length)
+  hints.forEach(function (k) {
+    assert.ok(bound.indexOf(k) !== -1,
+      "a tooltip advertises '" + k + "' but nothing binds it in onTextKey")
+  })
+})
+
 test("the README key table matches the bindings", function () {
   var readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
   var bound = boundKeys(panelSource())

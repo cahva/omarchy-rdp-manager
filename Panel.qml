@@ -973,7 +973,7 @@ Panel {
         PanelActionButton {
           visible: row.live
           iconText: root.glyphDisconnect
-          tooltipText: row.connected ? "Disconnect  (x)" : "Cancel  (x)"
+          tooltipText: row.connected ? "Disconnect  (s)" : "Cancel  (s)"
           foreground: root.urgent
           fontFamily: root.fontFamily
           onClicked: if (root.svc) root.svc.disconnect(row.conn.id)
