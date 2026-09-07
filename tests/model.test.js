@@ -246,6 +246,8 @@ test("normalizeGateway returns null for anything but a usable object", function 
   assert.strictEqual(M.normalizeGateway(null), null)
   assert.strictEqual(M.normalizeGateway("gw.example.com"), null)
   assert.strictEqual(M.normalizeGateway(443), null)
+  assert.strictEqual(M.normalizeGateway(false), null)
+  assert.strictEqual(M.normalizeGateway([]), null)
   assert.strictEqual(M.normalizeGateway({}), null)
   assert.strictEqual(M.normalizeGateway({ host: "   " }), null)
 })
@@ -266,6 +268,11 @@ test("normalizeGateway defaults and clamps the port to 443", function () {
   // make the dry-run preview disagree with the real launch.
   assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: true }), { host: "gw", port: 443 })
   assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: [9443] }), { host: "gw", port: 443 })
+  // Same story for the string forms Number() accepts but the launcher's
+  // digits-only grammar rejects: exponents, padding, hex.
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: "9e3" }), { host: "gw", port: 443 })
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: " 9443 " }), { host: "gw", port: 443 })
+  assert.deepStrictEqual(M.normalizeGateway({ host: "gw", port: "0x24" }), { host: "gw", port: 443 })
 })
 
 test("normalizeGateway drops a colon host it cannot mean, keeps a bracketed IPv6 one", function () {
@@ -424,14 +431,31 @@ test("validateConnection rejects a non-integer or nonnumeric gateway port", func
   var arr = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
                                    gateway: { host: "gw", port: [9443] } }, [])
   assert.ok(arr.errors.gateway)
+  // String forms outside the launcher's digits-only grammar would silently
+  // launch on 443 while reading as 9000/9443 to a human; they must error.
+  var exp = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                   gateway: { host: "gw", port: "9e3" } }, [])
+  assert.ok(exp.errors.gateway)
+  var padded = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                      gateway: { host: "gw", port: " 9443 " } }, [])
+  assert.ok(padded.errors.gateway)
 })
 
 test("validateConnection reports a gateway that is not an object", function () {
   // A bare string is a plausible hand-edit, since the form field takes one;
   // normalizeGateway() drops it silently, so validation must say something.
-  var r = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
-                                 gateway: "gw.example.com" }, [])
-  assert.ok(r.errors.gateway)
+  // Absent and null are the only supported "no gateway" spellings, so falsy
+  // hand-edits (false, 0) and arrays must be reported too, not treated as
+  // absent.
+  var shapes = ["gw.example.com", false, 0, [], [{ host: "gw" }]]
+  shapes.forEach(function (gw) {
+    var r = M.validateConnection({ id: "a", name: "A", host: "h", user: "u", gateway: gw }, [])
+    assert.ok(r.errors.gateway, "expected an error for gateway " + JSON.stringify(gw))
+  })
+  var absent = M.validateConnection({ id: "a", name: "A", host: "h", user: "u" }, [])
+  assert.strictEqual(absent.errors.gateway, undefined)
+  var nulled = M.validateConnection({ id: "a", name: "A", host: "h", user: "u", gateway: null }, [])
+  assert.strictEqual(nulled.errors.gateway, undefined)
 })
 
 test("validateConnection rejects the gateway host a bad host:port collapses into", function () {

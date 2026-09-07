@@ -274,19 +274,31 @@ function splitHostPort(rawHost) {
 // malformed endpoint. A host like that degrades to null (no gateway arg at
 // all), the same stance normalizeScale takes on a bad scale;
 // validateConnection reports both cases so the form path never gets this far.
-// The port must be a whole number in range, arriving as a number or a numeric
-// string — anything else (a fractional value, a boolean, an array: Number()
-// happily coerces true to 1 and [9443] to 9443) falls back to 443, which the
-// launcher mirrors with an integer-only check on jq's rendering of the value.
+// The port must be a whole number in range. A string is accepted only in the
+// launcher's own grammar — one to five ASCII digits — because the launcher
+// regex-checks jq's rendering of the value, and every string Number() accepts
+// beyond that grammar ("9e3", " 9443 ", "0x24") is one the launcher rejects,
+// which would make the dry-run preview disagree with the real launch. The
+// same goes for non-string, non-number values (true coerces to 1, [9443] to
+// 9443): anything outside the grammar falls back to 443 on both sides.
 function normalizeGateway(gateway) {
-  if (!gateway || typeof gateway !== "object") return null
+  if (!gateway || typeof gateway !== "object" || Array.isArray(gateway)) return null
   var host = trim(gateway.host)
   if (!host || /[\s,]/.test(host)) return null
   if (host.indexOf(":") !== -1 && !/^\[[^\]]+\]$/.test(host)) return null
-  var raw = gateway.port
-  var n = typeof raw === "number" || typeof raw === "string" ? Number(raw) : NaN
+  var n = gatewayPortNumber(gateway.port)
   var port = !isFinite(n) || n !== Math.floor(n) || n < 1 || n > 65535 ? DEFAULT_GATEWAY_PORT : n
   return { host: host, port: port }
+}
+
+// The one reading of a gateway port value both sides agree on; NaN for
+// anything outside it. Shared by normalizeGateway and validateConnection so
+// the two cannot drift from each other, and kept to the launcher's grammar so
+// neither drifts from the shell side.
+function gatewayPortNumber(raw) {
+  if (typeof raw === "number") return raw
+  if (typeof raw === "string" && /^[0-9]{1,5}$/.test(raw)) return Number(raw)
+  return NaN
 }
 
 // Bring a connection read from disk (or built by the form) into the exact
@@ -367,8 +379,15 @@ function validateConnection(conn, takenIds) {
 
   // normalizeGateway() silently drops a bad gateway; report it here so a typo
   // in the form (or a hand-edited file) doesn't quietly become "no gateway".
+  // Absent and null are the only supported "no gateway" spellings — anything
+  // else that is not a plain object ("gw.example.com", false, 0, an array) is
+  // a hand-edit that would vanish without a word otherwise.
   var rawGw = conn ? conn.gateway : null
-  if (rawGw && typeof rawGw === "object") {
+  if (rawGw === undefined || rawGw === null) {
+    // no gateway — nothing to check
+  } else if (typeof rawGw !== "object" || Array.isArray(rawGw)) {
+    errors.gateway = 'Gateway must be null or an object: { "host": ..., "port": ... }'
+  } else {
     var gwHost = trim(rawGw.host)
     if (gwHost && /[\s,]/.test(gwHost)) errors.gateway = "Gateway host cannot contain spaces or commas"
     // A colon that splitHostPort could not split off ("gw:abc", "gw:99999")
@@ -378,18 +397,13 @@ function validateConnection(conn, takenIds) {
       errors.gateway = "Use host or host:port (wrap an IPv6 address in brackets)"
     }
     if (rawGw.port !== undefined && rawGw.port !== null) {
-      // Type-gate before Number(): it coerces true to 1 and [9443] to 9443,
-      // which would let a hand-edited boolean or array pass without a word.
-      var rawGwPort = rawGw.port
-      var gwPort = typeof rawGwPort === "number" || typeof rawGwPort === "string" ? Number(rawGwPort) : NaN
+      // Read through the same grammar as normalizeGateway, so a value the
+      // launch would silently default ("9e3", " 9443 ", true) errors here.
+      var gwPort = gatewayPortNumber(rawGw.port)
       if (!isFinite(gwPort) || gwPort !== Math.floor(gwPort) || gwPort < 1 || gwPort > 65535) {
         errors.gateway = "Gateway port must be a whole number between 1 and 65535"
       }
     }
-  } else if (rawGw) {
-    // "gateway": "gw.example.com" is a plausible hand-edit given the form
-    // field takes a bare host; normalizeGateway() would drop it silently.
-    errors.gateway = 'Gateway must be an object: { "host": ..., "port": ... }'
   }
 
   // Only a typed or hand-edited value can be wrong here; the dropdown can only
@@ -880,7 +894,7 @@ function blankConnection() {
 if (typeof module !== "undefined") module.exports = {
   asList, slugify, isValidId, uniqueId,
   normalizeDrive, normalizeDrives, normalizeOptions, normalizeScale, normalizePort,
-  normalizeGateway, splitHostPort, normalizeConnection,
+  normalizeGateway, gatewayPortNumber, splitHostPort, normalizeConnection,
   parseConfig, serializeConfig, validateConnection,
   wmClassFor, buildArgs, previewArgs, previewCommand,
   describeExit, describeEnd, isFailureExit, isSessionEndCode, isDroppedSession,

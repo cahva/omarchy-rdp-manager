@@ -125,6 +125,14 @@ cat > "$TMP/connections.json" <<'JSON'
     { "id": "gateway-bool-port", "name": "Gateway bool port", "host": "10.0.0.21", "port": 3389,
       "user": "u", "domain": "",
       "gateway": { "host": "gw.example.com", "port": true },
+      "drives": [], "options": {} },
+    { "id": "gateway-exp-port", "name": "Gateway exponent port", "host": "10.0.0.22", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": "9e3" },
+      "drives": [], "options": {} },
+    { "id": "gateway-scalar", "name": "Gateway scalar", "host": "10.0.0.23", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": false,
       "drives": [], "options": {} }
   ]
 }
@@ -148,7 +156,7 @@ launcher_args() {
 
 export ROOT
 
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar; do
   a=$(launcher_args "$id")
   b=$(model_args "$id")
   if [[ "$a" == "$b" ]]; then
@@ -170,7 +178,7 @@ if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got 
 if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar; do
   if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
     ok
   else
@@ -180,7 +188,7 @@ done
 
 # Sizing. FreeRDP exits 22 when /smart-sizing and +dynamic-resolution are both
 # present, so "exactly one of them" is an invariant, not a style preference.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar; do
   a=$(launcher_args "$id")
   n=$(grep -c '^/size:' <<<"$a")
   if [[ "$n" == "1" ]]; then ok; else bad "'$id' must emit exactly one /size:, got $n" "$a"; fi
@@ -225,6 +233,13 @@ if grep -q '^/gateway:' <<<"$(launcher_args gateway-colon-host)"; then bad "an u
 # JSON true renders as "true" for jq and coerces to 1 for Number(); both sides
 # must treat it as invalid or the dry-run preview lies about the real launch.
 if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-bool-port)"; then ok; else bad "a boolean gateway port must fall back to the hidden default" "$(launcher_args gateway-bool-port)"; fi
+# "9e3" is a number to Number() (9000) but not to the digits-only grammar; both
+# sides must fall back to the hidden 443 or the preview and the launch differ.
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-exp-port)"; then ok; else bad "an exponent-string gateway port must fall back to the hidden default" "$(launcher_args gateway-exp-port)"; fi
+# A scalar gateway ("gateway": false) is dropped by both sides: Model.js in
+# normalizeGateway, the launcher because jq cannot index a boolean (stderr
+# noise from field() is expected and harmless, as with a scalar options).
+if grep -q '^/gateway:' <<<"$(launcher_args gateway-scalar)"; then bad "a scalar gateway must be dropped" "$(launcher_args gateway-scalar)"; else ok; fi
 # The password invariant holds on the gateway path too: exactly one /p: line,
 # redacted, and no p: smuggled in as a /gateway: sub-option.
 gw_args=$(launcher_args gateway)
