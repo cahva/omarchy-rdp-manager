@@ -5,6 +5,14 @@
      conflict over this file. The release commit renames this heading to the
      version and bumps manifest.json, so the number is chosen from what
      actually shipped rather than guessed when the branch was opened. -->
+## 0.5.0
+
+### Added
+
+- Per-connection RD Gateway support: set a gateway host (and optional port) to
+  tunnel through an RD Gateway that signs in with the connection's own
+  credentials, for hosts that are only reachable through one (#14)
+
 ## 0.4.0
 
 ### Changed
