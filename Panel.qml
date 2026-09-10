@@ -84,6 +84,9 @@ Panel {
   property string formId: ""
   property string formName: ""
   property string formHost: ""
+  // RD Gateway as "host" or "host:port", empty for a direct connection. Split
+  // apart on save the same way Host is.
+  property string formGateway: ""
   property string formUser: ""
   property string formPassword: ""
   property string formCert: "tofu"
@@ -225,6 +228,8 @@ Panel {
       // way it did before host/port were split apart on disk. formConnection()
       // splits it right back out on save.
       root.formHost = Model.formatHostPort(conn.host, conn.port)
+      root.formGateway = conn.gateway
+        ? Model.formatHostPort(conn.gateway.host, conn.gateway.port, Model.DEFAULT_GATEWAY_PORT) : ""
       root.formUser = conn.user
       root.formCert = conn.options.cert
       root.formScale = conn.options.scale
@@ -239,6 +244,7 @@ Panel {
       root.formId = ""
       root.formName = ""
       root.formHost = ""
+      root.formGateway = ""
       root.formUser = ""
       root.formCert = blank.options.cert
       root.formScale = blank.options.scale
@@ -293,6 +299,10 @@ Panel {
       user: root.formUser,
       domain: root.formIsNew ? "" : (svc && svc.connectionFor(root.formId)
         ? svc.connectionFor(root.formId).domain : ""),
+      gateway: (function() {
+        var gw = Model.splitHostPort(root.formGateway)
+        return gw.host ? { host: gw.host, port: gw.port !== null ? gw.port : Model.DEFAULT_GATEWAY_PORT } : null
+      })(),
       secret: "keyring",
       drives: root.drivesFromModel(),
       options: {
@@ -671,6 +681,17 @@ Panel {
               placeholder: "rdp.example.com"
               errorText: root.formErrors.host || ""
               onEdited: function(t) { root.formHost = t }
+              onSubmitted: root.saveForm()
+            }
+
+            FormField {
+              width: parent.width
+              label: "Gateway"
+              text: root.formGateway
+              placeholder: "gateway.example.com (optional)"
+              hint: "RD Gateway, signed in with the same credentials"
+              errorText: root.formErrors.gateway || ""
+              onEdited: function(t) { root.formGateway = t }
               onSubmitted: root.saveForm()
             }
 

@@ -97,7 +97,43 @@ cat > "$TMP/connections.json" <<'JSON'
       "drives": [], "options": { "scale": 180 } },
     { "id": "bad-scale", "name": "Bad scale", "host": "10.0.0.14", "port": 3389,
       "user": "u", "domain": "",
-      "drives": [], "options": { "scale": "250" } }
+      "drives": [], "options": { "scale": "250" } },
+    { "id": "gateway", "name": "Gateway", "host": "10.0.0.15", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": 443 },
+      "drives": [], "options": {} },
+    { "id": "gateway-port", "name": "Gateway port", "host": "10.0.0.16", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": 9443 },
+      "drives": [], "options": {} },
+    { "id": "gateway-invalid", "name": "Gateway invalid", "host": "10.0.0.17", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw,p:evil", "port": 9443 },
+      "drives": [], "options": {} },
+    { "id": "gateway-bad-port", "name": "Gateway bad port", "host": "10.0.0.18", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": "abc" },
+      "drives": [], "options": {} },
+    { "id": "gateway-evil-port", "name": "Gateway evil port", "host": "10.0.0.19", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": "443,p:evil" },
+      "drives": [], "options": {} },
+    { "id": "gateway-colon-host", "name": "Gateway colon host", "host": "10.0.0.20", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com:abc", "port": 9443 },
+      "drives": [], "options": {} },
+    { "id": "gateway-bool-port", "name": "Gateway bool port", "host": "10.0.0.21", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": true },
+      "drives": [], "options": {} },
+    { "id": "gateway-exp-port", "name": "Gateway exponent port", "host": "10.0.0.22", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": { "host": "gw.example.com", "port": "9e3" },
+      "drives": [], "options": {} },
+    { "id": "gateway-scalar", "name": "Gateway scalar", "host": "10.0.0.23", "port": 3389,
+      "user": "u", "domain": "",
+      "gateway": false,
+      "drives": [], "options": {} }
   ]
 }
 JSON
@@ -120,7 +156,7 @@ launcher_args() {
 
 export ROOT
 
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar; do
   a=$(launcher_args "$id")
   b=$(model_args "$id")
   if [[ "$a" == "$b" ]]; then
@@ -142,7 +178,7 @@ if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got 
 if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar; do
   if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
     ok
   else
@@ -152,7 +188,7 @@ done
 
 # Sizing. FreeRDP exits 22 when /smart-sizing and +dynamic-resolution are both
 # present, so "exactly one of them" is an invariant, not a style preference.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar; do
   a=$(launcher_args "$id")
   n=$(grep -c '^/size:' <<<"$a")
   if [[ "$n" == "1" ]]; then ok; else bad "'$id' must emit exactly one /size:, got $n" "$a"; fi
@@ -177,6 +213,40 @@ if grep -qx -- '/size:2560x1440' <<<"$(launcher_args fixed-auto)"; then ok; else
 if grep -qx -- '/size:2560x1440' <<<"$(launcher_args bad-resolution)"; then ok; else bad "an out-of-range resolution must fall back to auto"; fi
 # The legacy boolean still selects the mode it used to mean.
 if grep -qx -- '+dynamic-resolution' <<<"$(launcher_args baseline)"; then ok; else bad "legacy dynamicResolution:true must still mean dynamic"; fi
+
+# RD Gateway. A bare g: sub-option keeps FreeRDP in same-credentials mode, so
+# the line must never grow u:/d:/p: sub-options, port 443 stays hidden like
+# 3389 does in /v:, and a host that could inject sub-options (comma or
+# whitespace) must not produce a /gateway: line at all.
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway)"; then ok; else bad "gateway must emit a bare /gateway:g: line" "$(launcher_args gateway)"; fi
+if grep -q '^/gateway:.*:443$' <<<"$(launcher_args gateway)"; then bad "default gateway port 443 must be hidden"; else ok; fi
+if grep -qx -- '/gateway:g:gw.example.com:9443' <<<"$(launcher_args gateway-port)"; then ok; else bad "non-default gateway port must be included" "$(launcher_args gateway-port)"; fi
+if grep -q '^/gateway:' <<<"$(launcher_args baseline)"; then bad "a connection without a gateway must not emit /gateway:"; else ok; fi
+if grep -q '^/gateway:' <<<"$(launcher_args gateway-invalid)"; then bad "an injectable gateway host must be dropped" "$(launcher_args gateway-invalid)"; else ok; fi
+# A port that is not a whole in-range number falls back to the hidden 443, so
+# neither garbage nor a comma-smuggled sub-option can ride in through the port.
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-bad-port)"; then ok; else bad "a nonnumeric gateway port must fall back to the hidden default" "$(launcher_args gateway-bad-port)"; fi
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-evil-port)"; then ok; else bad "an injectable gateway port must fall back to the hidden default" "$(launcher_args gateway-evil-port)"; fi
+if grep -q -- ',p:' <<<"$(launcher_args gateway-evil-port)"; then bad "a p: sub-option leaked in through the gateway port" "$(launcher_args gateway-evil-port)"; else ok; fi
+# A colon host is an unsplit host:port typo, not an endpoint to guess at.
+if grep -q '^/gateway:' <<<"$(launcher_args gateway-colon-host)"; then bad "an unsplittable colon gateway host must be dropped" "$(launcher_args gateway-colon-host)"; else ok; fi
+# JSON true renders as "true" for jq and coerces to 1 for Number(); both sides
+# must treat it as invalid or the dry-run preview lies about the real launch.
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-bool-port)"; then ok; else bad "a boolean gateway port must fall back to the hidden default" "$(launcher_args gateway-bool-port)"; fi
+# "9e3" is a number to Number() (9000) but not to the digits-only grammar; both
+# sides must fall back to the hidden 443 or the preview and the launch differ.
+if grep -qx -- '/gateway:g:gw.example.com' <<<"$(launcher_args gateway-exp-port)"; then ok; else bad "an exponent-string gateway port must fall back to the hidden default" "$(launcher_args gateway-exp-port)"; fi
+# A scalar gateway ("gateway": false) is dropped by both sides: Model.js in
+# normalizeGateway, the launcher because jq cannot index a boolean (stderr
+# noise from field() is expected and harmless, as with a scalar options).
+if grep -q '^/gateway:' <<<"$(launcher_args gateway-scalar)"; then bad "a scalar gateway must be dropped" "$(launcher_args gateway-scalar)"; else ok; fi
+# The password invariant holds on the gateway path too: exactly one /p: line,
+# redacted, and no p: smuggled in as a /gateway: sub-option.
+gw_args=$(launcher_args gateway)
+count=$(grep -c '^/p:' <<<"$gw_args")
+if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line for gateway, got $count"; fi
+if grep -qx -- '/p:<redacted>' <<<"$gw_args"; then ok; else bad "the gateway dry run must redact the password"; fi
+if grep -q -- ',p:' <<<"$gw_args"; then bad "a p: sub-option leaked into the gateway line" "$gw_args"; else ok; fi
 
 # Port, domain and drive fan-out.
 if grep -qx -- '/scale:180' <<<"$(launcher_args hidpi)"; then ok; else bad "explicit scale must be passed to FreeRDP" "$(launcher_args hidpi)"; fi

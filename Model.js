@@ -77,6 +77,7 @@ function uniqueId(name, takenIds) {
 // ------------------------------------------------------------ normalization
 
 var DEFAULT_PORT = 3389
+var DEFAULT_GATEWAY_PORT = 443
 var CERT_POLICIES = ["tofu", "ignore", "deny"]
 
 // FreeRDP's /scale: accepts exactly these three values (see `xfreerdp3 --help`).
@@ -259,6 +260,47 @@ function splitHostPort(rawHost) {
   return { host: host.slice(0, lastColon), port: port }
 }
 
+// An optional RD Gateway the session is tunnelled through, or null for a
+// direct connection. Stored as { host, port } rather than a "host:port"
+// string so the launcher can read the two fields with plain jq lookups
+// instead of re-implementing splitHostPort's bracket-aware parsing in bash.
+//
+// The host lands inside FreeRDP's consolidated `/gateway:g:...` option, whose
+// sub-options are comma-separated, so a comma (or whitespace) in the host is
+// sub-option injection — e.g. "gw,p:x" would smuggle a `p:` gateway password.
+// A colon is rejected too, except in a bracketed IPv6 literal: the port has
+// its own field here, so a colon in the host is a "gw:abc" or "gw:99999" typo
+// that splitHostPort could not split, and emitting it would hand FreeRDP a
+// malformed endpoint. A host like that degrades to null (no gateway arg at
+// all), the same stance normalizeScale takes on a bad scale;
+// validateConnection reports both cases so the form path never gets this far.
+// The port must be a whole number in range. A string is accepted only in the
+// launcher's own grammar — one to five ASCII digits — because the launcher
+// regex-checks jq's rendering of the value, and every string Number() accepts
+// beyond that grammar ("9e3", " 9443 ", "0x24") is one the launcher rejects,
+// which would make the dry-run preview disagree with the real launch. The
+// same goes for non-string, non-number values (true coerces to 1, [9443] to
+// 9443): anything outside the grammar falls back to 443 on both sides.
+function normalizeGateway(gateway) {
+  if (!gateway || typeof gateway !== "object" || Array.isArray(gateway)) return null
+  var host = trim(gateway.host)
+  if (!host || /[\s,]/.test(host)) return null
+  if (host.indexOf(":") !== -1 && !/^\[[^\]]+\]$/.test(host)) return null
+  var n = gatewayPortNumber(gateway.port)
+  var port = !isFinite(n) || n !== Math.floor(n) || n < 1 || n > 65535 ? DEFAULT_GATEWAY_PORT : n
+  return { host: host, port: port }
+}
+
+// The one reading of a gateway port value both sides agree on; NaN for
+// anything outside it. Shared by normalizeGateway and validateConnection so
+// the two cannot drift from each other, and kept to the launcher's grammar so
+// neither drifts from the shell side.
+function gatewayPortNumber(raw) {
+  if (typeof raw === "number") return raw
+  if (typeof raw === "string" && /^[0-9]{1,5}$/.test(raw)) return Number(raw)
+  return NaN
+}
+
 // Bring a connection read from disk (or built by the form) into the exact
 // shape the rest of the code assumes. Missing keys get defaults; unknown keys
 // are dropped so a hand-edited file cannot smuggle anything into buildArgs.
@@ -272,6 +314,7 @@ function normalizeConnection(conn) {
     port: normalizePort(c.port),
     user: trim(c.user),
     domain: trim(c.domain),
+    gateway: normalizeGateway(c.gateway),
     secret: trim(c.secret) === "prompt" ? "prompt" : "keyring",
     drives: normalizeDrives(c.drives),
     options: normalizeOptions(c.options)
@@ -334,6 +377,35 @@ function validateConnection(conn, takenIds) {
   var rawPort = conn && conn.port !== undefined && conn.port !== null ? Number(conn.port) : DEFAULT_PORT
   if (!isFinite(rawPort) || rawPort < 1 || rawPort > 65535) errors.port = "Port must be between 1 and 65535"
 
+  // normalizeGateway() silently drops a bad gateway; report it here so a typo
+  // in the form (or a hand-edited file) doesn't quietly become "no gateway".
+  // Absent and null are the only supported "no gateway" spellings — anything
+  // else that is not a plain object ("gw.example.com", false, 0, an array) is
+  // a hand-edit that would vanish without a word otherwise.
+  var rawGw = conn ? conn.gateway : null
+  if (rawGw === undefined || rawGw === null) {
+    // no gateway — nothing to check
+  } else if (typeof rawGw !== "object" || Array.isArray(rawGw)) {
+    errors.gateway = 'Gateway must be null or an object: { "host": ..., "port": ... }'
+  } else {
+    var gwHost = trim(rawGw.host)
+    if (gwHost && /[\s,]/.test(gwHost)) errors.gateway = "Gateway host cannot contain spaces or commas"
+    // A colon that splitHostPort could not split off ("gw:abc", "gw:99999")
+    // would otherwise ride along inside the host and reach FreeRDP as a
+    // malformed endpoint. Only a bracketed IPv6 literal keeps its colons.
+    else if (gwHost && gwHost.indexOf(":") !== -1 && !/^\[[^\]]+\]$/.test(gwHost)) {
+      errors.gateway = "Use host or host:port (wrap an IPv6 address in brackets)"
+    }
+    if (rawGw.port !== undefined && rawGw.port !== null) {
+      // Read through the same grammar as normalizeGateway, so a value the
+      // launch would silently default ("9e3", " 9443 ", true) errors here.
+      var gwPort = gatewayPortNumber(rawGw.port)
+      if (!isFinite(gwPort) || gwPort !== Math.floor(gwPort) || gwPort < 1 || gwPort > 65535) {
+        errors.gateway = "Gateway port must be a whole number between 1 and 65535"
+      }
+    }
+  }
+
   // Only a typed or hand-edited value can be wrong here; the dropdown can only
   // produce "auto" or a preset. normalizeResolution() would quietly fall back
   // to "auto", which would hide the mistake instead of reporting it.
@@ -394,6 +466,10 @@ function buildArgs(conn, autoSize) {
   args.push("/v:" + formatHostPort(c.host, c.port))
   args.push("/u:" + c.user)
   if (c.domain) args.push("/d:" + c.domain)
+  // Bare `g:` — no u:/d:/p: sub-options — puts FreeRDP in its same-credentials
+  // mode (GatewayUseSameCredentials), so the gateway authenticates with the
+  // connection's own user/domain/password and no secret enters this list.
+  if (c.gateway) args.push("/gateway:g:" + formatHostPort(c.gateway.host, c.gateway.port, DEFAULT_GATEWAY_PORT))
 
   args.push("/cert:" + c.options.cert)
   // FreeRDP 3 enables clipboard by default, so the meaningful action is the
@@ -681,8 +757,10 @@ function formatDuration(seconds) {
 
 // The one spot the default port is worth hiding: 3389 is what a reader
 // assumes anyway, so only a non-default port earns the extra characters.
-function formatHostPort(host, port) {
-  return port === DEFAULT_PORT ? host : host + ":" + port
+// A gateway hides 443 the same way, via the defaultPort argument.
+function formatHostPort(host, port, defaultPort) {
+  var d = defaultPort === undefined ? DEFAULT_PORT : defaultPort
+  return port === d ? host : host + ":" + port
 }
 
 function endpointFor(conn) {
@@ -806,6 +884,7 @@ function blankConnection() {
     port: DEFAULT_PORT,
     user: "",
     domain: "",
+    gateway: null,
     secret: "keyring",
     drives: [],
     options: { displayMode: "fixed", resolution: "auto", clipboard: true, cert: "tofu", scale: "100" }
@@ -815,7 +894,7 @@ function blankConnection() {
 if (typeof module !== "undefined") module.exports = {
   asList, slugify, isValidId, uniqueId,
   normalizeDrive, normalizeDrives, normalizeOptions, normalizeScale, normalizePort,
-  splitHostPort, normalizeConnection,
+  normalizeGateway, gatewayPortNumber, splitHostPort, normalizeConnection,
   parseConfig, serializeConfig, validateConnection,
   wmClassFor, buildArgs, previewArgs, previewCommand,
   describeExit, describeEnd, isFailureExit, isSessionEndCode, isDroppedSession,
@@ -824,6 +903,6 @@ if (typeof module !== "undefined") module.exports = {
   formatDuration, endpointFor, formatHostPort, driveSummary, rowStatus, tooltipFor, heroMeta,
   upsertConnection, removeConnection, findConnection, blankConnection,
   autoResolution, parseResolution, normalizeResolution, normalizeDisplayMode, resolveResolution,
-  DEFAULT_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS, SCALE_VALUES,
+  DEFAULT_PORT, DEFAULT_GATEWAY_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS, SCALE_VALUES,
   AUTO_MAX_WIDTH, AUTO_MAX_HEIGHT
 }
