@@ -98,6 +98,8 @@ Panel {
   property string formResolution: "auto"
   property string formResolutionCustom: ""
   property bool formClipboard: true
+  property bool formSound: true
+  property bool formMicrophone: false
   property var formErrors: ({})
   property string formNotice: ""
 
@@ -236,6 +238,8 @@ Panel {
       root.formDisplayMode = conn.options.displayMode
       root.loadResolution(conn.options.resolution)
       root.formClipboard = conn.options.clipboard
+      root.formSound = conn.options.sound
+      root.formMicrophone = conn.options.microphone
       loadDrives(conn.drives)
       if (svc) svc.probeSecret(conn.id)
     } else {
@@ -251,6 +255,8 @@ Panel {
       root.formDisplayMode = blank.options.displayMode
       root.loadResolution(blank.options.resolution)
       root.formClipboard = blank.options.clipboard
+      root.formSound = blank.options.sound
+      root.formMicrophone = blank.options.microphone
       loadDrives([])
     }
     root.view = "form"
@@ -309,6 +315,8 @@ Panel {
         displayMode: root.formDisplayMode,
         resolution: root.currentResolution(),
         clipboard: root.formClipboard,
+        sound: root.formSound,
+        microphone: root.formMicrophone,
         cert: root.formCert,
         scale: root.formScale
       }
@@ -845,6 +853,22 @@ Panel {
               detail: "Copy and paste between this machine and the remote"
               checked: root.formClipboard
               onToggledOption: root.formClipboard = !root.formClipboard
+            }
+
+            OptionToggle {
+              width: parent.width
+              label: "Audio output"
+              detail: "Play the remote machine's sound on this one"
+              checked: root.formSound
+              onToggledOption: root.formSound = !root.formSound
+            }
+
+            OptionToggle {
+              width: parent.width
+              label: "Audio input"
+              detail: "Send your default audio input, usually the microphone, to the remote"
+              checked: root.formMicrophone
+              onToggledOption: root.formMicrophone = !root.formMicrophone
             }
 
             Dropdown {

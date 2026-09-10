@@ -242,17 +242,24 @@ display_mode() {
 
 # Careful with jq's `//`: it substitutes for false as well as null, so
 # `.options.clipboard // true` would turn an explicit false back into true and
-# silently ignore the user switching clipboard off. Test for false directly.
+# silently ignore the user switching clipboard off. Test the type instead.
 bool_field() {
-  # prints "false" only for an explicit false; anything else (including a
-  # missing key) prints "true", matching Model.js normalizeOptions().
-  printf '%s' "$conn" | "$JQ" -r 'if .'"$1"' == false then "false" else "true" end'
+  # Prints the field if it is a real JSON boolean, else the default ($2). A
+  # missing key or a hand-edited "yes" / 1 falls to the default, matching
+  # Model.js normalizeOptions(): clipboard and sound default on, microphone
+  # needs an explicit true.
+  printf '%s' "$conn" | "$JQ" -r --argjson d "$2" \
+    'if (.'"$1"' | type) == "boolean" then .'"$1"' else $d end'
 }
-if [[ $(bool_field options.clipboard) == "false" ]]; then
+if [[ $(bool_field options.clipboard true) == "false" ]]; then
   args+=("-clipboard")
 else
   args+=("+clipboard")
 fi
+# Bare /sound and /microphone let FreeRDP pick its default audio subsystem
+# (pulse, served by PipeWire on Omarchy); omission is the off state for both.
+[[ $(bool_field options.sound true) == "true" ]] && args+=("/sound")
+[[ $(bool_field options.microphone false) == "true" ]] && args+=("/microphone")
 # "100" is native size; omit the flag rather than pass a no-op /scale:100.
 [[ "$scale" != "100" ]] && args+=("/scale:$scale")
 # Without a size FreeRDP picks 1024x768, a postage stamp on a modern display.

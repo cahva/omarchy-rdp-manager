@@ -133,7 +133,19 @@ cat > "$TMP/connections.json" <<'JSON'
     { "id": "gateway-scalar", "name": "Gateway scalar", "host": "10.0.0.23", "port": 3389,
       "user": "u", "domain": "",
       "gateway": false,
-      "drives": [], "options": {} }
+      "drives": [], "options": {} },
+    { "id": "no-sound", "name": "No sound", "host": "10.0.0.24", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "sound": false } },
+    { "id": "mic", "name": "Microphone", "host": "10.0.0.25", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "microphone": true } },
+    { "id": "mic-junk", "name": "Microphone junk", "host": "10.0.0.26", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "microphone": "yes" } },
+    { "id": "sound-junk", "name": "Sound junk", "host": "10.0.0.27", "port": 3389,
+      "user": "u", "domain": "",
+      "drives": [], "options": { "sound": "no" } }
   ]
 }
 JSON
@@ -156,7 +168,7 @@ launcher_args() {
 
 export ROOT
 
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar no-sound mic mic-junk sound-junk; do
   a=$(launcher_args "$id")
   b=$(model_args "$id")
   if [[ "$a" == "$b" ]]; then
@@ -178,7 +190,7 @@ if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line, got 
 if grep -qx -- '/p:<redacted>' <<<"$args"; then ok; else bad "the dry run must redact the password"; fi
 
 # wm-class drives status detection; a missing one silently breaks the icon.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar no-sound mic mic-junk sound-junk; do
   if grep -qx -- "/wm-class:omarchy-rdp-$id" <<<"$(launcher_args "$id")"; then
     ok
   else
@@ -188,7 +200,7 @@ done
 
 # Sizing. FreeRDP exits 22 when /smart-sizing and +dynamic-resolution are both
 # present, so "exactly one of them" is an invariant, not a style preference.
-for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar; do
+for id in baseline negatives multidrive noname fixed-auto scaled-explicit dynamic-explicit bad-resolution unicode-resolution hidpi bad-scale gateway gateway-port gateway-invalid gateway-bad-port gateway-evil-port gateway-colon-host gateway-bool-port gateway-exp-port gateway-scalar no-sound mic mic-junk sound-junk; do
   a=$(launcher_args "$id")
   n=$(grep -c '^/size:' <<<"$a")
   if [[ "$n" == "1" ]]; then ok; else bad "'$id' must emit exactly one /size:, got $n" "$a"; fi
@@ -247,6 +259,17 @@ count=$(grep -c '^/p:' <<<"$gw_args")
 if [[ "$count" == "1" ]]; then ok; else bad "expected exactly one /p: line for gateway, got $count"; fi
 if grep -qx -- '/p:<redacted>' <<<"$gw_args"; then ok; else bad "the gateway dry run must redact the password"; fi
 if grep -q -- ',p:' <<<"$gw_args"; then bad "a p: sub-option leaked into the gateway line" "$gw_args"; else ok; fi
+
+# Audio. Output defaults on (one bare /sound line), input requires an explicit
+# true — a truthy junk value must not start microphone capture — and omission
+# is FreeRDP's off state, so an off toggle means no line at all.
+if [[ $(grep -cx -- '/sound' <<<"$(launcher_args baseline)") == "1" ]]; then ok; else bad "expected exactly one /sound line by default" "$(launcher_args baseline)"; fi
+if grep -qx -- '/microphone' <<<"$(launcher_args baseline)"; then bad "audio input must be off by default"; else ok; fi
+if grep -qx -- '/sound' <<<"$(launcher_args no-sound)"; then bad "sound:false must not emit /sound" "$(launcher_args no-sound)"; else ok; fi
+if grep -qx -- '/microphone' <<<"$(launcher_args mic)"; then ok; else bad "microphone:true must emit /microphone" "$(launcher_args mic)"; fi
+if grep -qx -- '/microphone' <<<"$(launcher_args mic-junk)"; then bad "a truthy junk microphone value must stay off" "$(launcher_args mic-junk)"; else ok; fi
+# The other half of the asymmetry: only a real false switches sound off.
+if grep -qx -- '/sound' <<<"$(launcher_args sound-junk)"; then ok; else bad "a junk sound value must fall back to on" "$(launcher_args sound-junk)"; fi
 
 # Port, domain and drive fan-out.
 if grep -qx -- '/scale:180' <<<"$(launcher_args hidpi)"; then ok; else bad "explicit scale must be passed to FreeRDP" "$(launcher_args hidpi)"; fi
