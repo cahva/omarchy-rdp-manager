@@ -248,11 +248,21 @@ bool_field() {
   # missing key) prints "true", matching Model.js normalizeOptions().
   printf '%s' "$conn" | "$JQ" -r 'if .'"$1"' == false then "false" else "true" end'
 }
+# The default-off twin: prints "true" only for an explicit true, so a missing
+# key or a truthy junk value ("yes", 1) stays off, again matching Model.js
+# normalizeOptions(), which reads the microphone with === true.
+bool_field_off() {
+  printf '%s' "$conn" | "$JQ" -r 'if .'"$1"' == true then "true" else "false" end'
+}
 if [[ $(bool_field options.clipboard) == "false" ]]; then
   args+=("-clipboard")
 else
   args+=("+clipboard")
 fi
+# Bare /sound and /microphone let FreeRDP pick its default audio subsystem
+# (pulse, served by PipeWire on Omarchy); omission is the off state for both.
+[[ $(bool_field options.sound) == "false" ]] || args+=("/sound")
+[[ $(bool_field_off options.microphone) == "true" ]] && args+=("/microphone")
 # "100" is native size; omit the flag rather than pass a no-op /scale:100.
 [[ "$scale" != "100" ]] && args+=("/scale:$scale")
 # Without a size FreeRDP picks 1024x768, a postage stamp on a modern display.

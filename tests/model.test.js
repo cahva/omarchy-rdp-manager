@@ -87,9 +87,18 @@ test("uniqueId reads a sequence wrapper of taken ids", function () {
 
 test("normalizeOptions defaults on, and honours an explicit false", function () {
   assert.deepStrictEqual(M.normalizeOptions(undefined),
-    { displayMode: "dynamic", resolution: "auto", clipboard: true, cert: "tofu", scale: "100" })
-  assert.deepStrictEqual(M.normalizeOptions({ clipboard: false, dynamicResolution: false, cert: "ignore", scale: 180 }),
-    { displayMode: "fixed", resolution: "auto", clipboard: false, cert: "ignore", scale: "180" })
+    { displayMode: "dynamic", resolution: "auto", clipboard: true, sound: true, microphone: false, cert: "tofu", scale: "100" })
+  assert.deepStrictEqual(M.normalizeOptions({ clipboard: false, sound: false, dynamicResolution: false, cert: "ignore", scale: 180 }),
+    { displayMode: "fixed", resolution: "auto", clipboard: false, sound: false, microphone: false, cert: "ignore", scale: "180" })
+})
+
+test("normalizeOptions enables the microphone only for an explicit true", function () {
+  // Audio input is default-off and stays off for truthy junk: a hand-edited
+  // "yes" or 1 must not silently start capturing.
+  assert.strictEqual(M.normalizeOptions({ microphone: true }).microphone, true)
+  assert.strictEqual(M.normalizeOptions({ microphone: "yes" }).microphone, false)
+  assert.strictEqual(M.normalizeOptions({ microphone: 1 }).microphone, false)
+  assert.strictEqual(M.normalizeOptions({}).microphone, false)
 })
 
 test("normalizeScale accepts only FreeRDP's three /scale: values", function () {
@@ -491,6 +500,7 @@ test("buildArgs reproduces the documented baseline command", function () {
     "/u:Administrator",
     "/cert:tofu",
     "+clipboard",
+    "/sound",
     // No autoSize was passed, so "auto" lands on the documented fallback.
     "/size:1920x1080",
     "+dynamic-resolution",
@@ -508,6 +518,22 @@ test("buildArgs honours clipboard:false and dynamicResolution:false", function (
   assert.ok(args.indexOf("-clipboard") !== -1, "expected -clipboard in " + args.join(" "))
   assert.ok(args.indexOf("+clipboard") === -1)
   assert.ok(args.indexOf("+dynamic-resolution") === -1)
+})
+
+test("buildArgs emits /sound by default and drops it on sound:false", function () {
+  var on = M.buildArgs({ id: "a", name: "A", host: "h", user: "u" })
+  assert.ok(on.indexOf("/sound") !== -1, "expected /sound in " + on.join(" "))
+  var off = M.buildArgs({ id: "a", name: "A", host: "h", user: "u", options: { sound: false } })
+  assert.ok(off.indexOf("/sound") === -1, "sound:false must not emit /sound")
+})
+
+test("buildArgs emits /microphone only for an explicit true", function () {
+  var off = M.buildArgs({ id: "a", name: "A", host: "h", user: "u" })
+  assert.ok(off.indexOf("/microphone") === -1, "audio input must be off by default")
+  var junk = M.buildArgs({ id: "a", name: "A", host: "h", user: "u", options: { microphone: "yes" } })
+  assert.ok(junk.indexOf("/microphone") === -1, "truthy junk must not start capture")
+  var on = M.buildArgs({ id: "a", name: "A", host: "h", user: "u", options: { microphone: true } })
+  assert.ok(on.indexOf("/microphone") !== -1, "expected /microphone in " + on.join(" "))
 })
 
 test("buildArgs emits exactly one of /smart-sizing and +dynamic-resolution", function () {
@@ -588,6 +614,7 @@ test("buildArgs places /gateway: after the identity block, hiding port 443", fun
     "/gateway:g:gw.example.com",
     "/cert:tofu",
     "+clipboard",
+    "/sound",
     "/size:1920x1080",
     "+dynamic-resolution",
     "/wm-class:omarchy-rdp-a",

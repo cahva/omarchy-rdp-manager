@@ -215,6 +215,11 @@ function normalizeOptions(options) {
     displayMode: normalizeDisplayMode(o),
     resolution: normalizeResolution(o.resolution),
     clipboard: o.clipboard !== false,
+    // Audio output defaults on, like every RDP client; audio input requires an
+    // explicit true, because a truthy junk value ("yes", 1) silently turning
+    // microphone capture on is not a surprise anyone wants.
+    sound: o.sound !== false,
+    microphone: o.microphone === true,
     cert: CERT_POLICIES.indexOf(cert) === -1 ? "tofu" : cert,
     scale: normalizeScale(o.scale)
   }
@@ -476,6 +481,14 @@ function buildArgs(conn, autoSize) {
   // negative one. Emitting +clipboard as well keeps the intent readable in a
   // dry run and matches what a user would type by hand.
   args.push(c.options.clipboard ? "+clipboard" : "-clipboard")
+  // Bare /sound and /microphone: FreeRDP picks its default audio subsystem
+  // (the pulse backend, which PipeWire serves on Omarchy), and sub-option
+  // tuning (sys/dev/format) is out of scope. Omission is FreeRDP's off state
+  // for both, so there is no negative flag to emit. /microphone drives the
+  // generic audio-input channel: it captures the OS default source, which is
+  // usually but not necessarily a microphone.
+  if (c.options.sound) args.push("/sound")
+  if (c.options.microphone) args.push("/microphone")
   // "100" is native size; omit the flag rather than pass a no-op /scale:100.
   if (c.options.scale !== "100") args.push("/scale:" + c.options.scale)
 
@@ -887,7 +900,7 @@ function blankConnection() {
     gateway: null,
     secret: "keyring",
     drives: [],
-    options: { displayMode: "fixed", resolution: "auto", clipboard: true, cert: "tofu", scale: "100" }
+    options: { displayMode: "fixed", resolution: "auto", clipboard: true, sound: true, microphone: false, cert: "tofu", scale: "100" }
   }
 }
 

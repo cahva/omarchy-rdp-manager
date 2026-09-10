@@ -150,6 +150,8 @@ contains a password** — only a `"secret": "keyring"` marker.
         "displayMode": "fixed",
         "resolution": "auto",
         "clipboard": true,
+        "sound": true,
+        "microphone": false,
         "cert": "tofu",
         "scale": "100"
       }
@@ -181,6 +183,16 @@ Edits are picked up live — no reload needed. Notes:
   resolved and reached by the gateway, not by this machine, so it can be a
   name only the gateway's network knows. The gateway's TLS certificate is
   checked under the same `cert` policy as the connection.
+- `sound` plays the remote machine's audio on this one (FreeRDP's `/sound`).
+  On by default; earlier versions never redirected audio, so connections that
+  were silent before start playing sound after updating. Switch the "Audio
+  output" toggle off per connection to get the old behaviour back.
+- `microphone` sends this machine's audio input to the remote (FreeRDP's
+  `/microphone`). Off by default, and only an explicit `true` enables it. It
+  redirects the OS **default source**, which is usually the microphone but can
+  be any source you set as the default (a monitor of an output, say). Both
+  audio options use FreeRDP's default audio subsystem, which is the pulse
+  layer PipeWire provides on Omarchy.
 - `cert` is `tofu` (trust on first use), `ignore`, or `deny`. TOFU state is
   FreeRDP's own, in `~/.config/freerdp/server/`.
 - `resolution` is `auto` or `WIDTHxHEIGHT`. `auto` matches the monitor the
