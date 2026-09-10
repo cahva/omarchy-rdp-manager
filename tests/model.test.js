@@ -101,6 +101,15 @@ test("normalizeOptions enables the microphone only for an explicit true", functi
   assert.strictEqual(M.normalizeOptions({}).microphone, false)
 })
 
+test("normalizeOptions keeps sound on for anything but an explicit false", function () {
+  // The other half of the asymmetry: only a real false switches output off,
+  // so a hand-edited "no" still plays sound, the same way clipboard behaves.
+  assert.strictEqual(M.normalizeOptions({ sound: "no" }).sound, true)
+  assert.strictEqual(M.normalizeOptions({ sound: 0 }).sound, true)
+  assert.strictEqual(M.normalizeOptions({ sound: false }).sound, false)
+  assert.ok(M.buildArgs({ id: "a", name: "A", host: "h", user: "u", options: { sound: "no" } }).indexOf("/sound") !== -1)
+})
+
 test("normalizeScale accepts only FreeRDP's three /scale: values", function () {
   assert.strictEqual(M.normalizeScale(undefined), "100")
   assert.strictEqual(M.normalizeScale(""), "100")

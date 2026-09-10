@@ -866,7 +866,7 @@ Panel {
             OptionToggle {
               width: parent.width
               label: "Audio input"
-              detail: "Send this machine's default input (usually the microphone) to the remote"
+              detail: "Send your default audio input, usually the microphone, to the remote"
               checked: root.formMicrophone
               onToggledOption: root.formMicrophone = !root.formMicrophone
             }
