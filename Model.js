@@ -208,6 +208,10 @@ function normalizeScale(scale) {
   return SCALE_VALUES.indexOf(s) === -1 ? "100" : s
 }
 
+// Bring a connection's options into the exact shape buildArgs() reads, with a
+// default for every key so a file written by an older version, or by hand, is
+// never missing one. Unknown keys are dropped here, which is what keeps a
+// hand-edited file from smuggling anything into the argument list.
 function normalizeOptions(options) {
   var o = options && typeof options === "object" ? options : {}
   var cert = trim(o.cert).toLowerCase()
