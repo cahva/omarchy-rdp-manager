@@ -754,7 +754,7 @@ if [[ -x /usr/bin/flock ]]; then
   # 9>&- the FreeRDP child and the watcher subshell would hold it too, and an
   # orphan outliving a killed launcher would keep the id locked while the status
   # helper reported the session stopped.
-  race_lock="$race_dir/baseline.lock"
+  race_lock="$race_dir/baseline.lockdir"
   race_extra=0
   # Every descriptor, not just 9: an inheritor can dup it elsewhere, and a scan
   # fixed on 9 would miss that.
@@ -821,6 +821,37 @@ if [[ -x /usr/bin/flock ]]; then
   kill -TERM "$td_second" 2>/dev/null
   wait "$td_second" 2>/dev/null
   pkill -f "$td_stub" 2>/dev/null || true
+
+  # The lock path must never be followed. `exec 9>file` on a symlink truncates
+  # its target before flock runs, which is what a marketplace reviewer flagged
+  # in the file form of this lock, omacom/omarchy-plugin-marketplace#6124. The
+  # directory form refuses a link at the lock path outright and leaves what it
+  # pointed at untouched, whether that is a file or a directory.
+  rm -rf "$race_dir"
+  mkdir -p "$race_dir"
+  chmod 700 "$race_dir"
+  printf 'keep me\n' > "$race_dir/victim"
+  ln -s "$race_dir/victim" "$race_dir/baseline.lockdir"
+  OMARCHY_RDP_STATE_DIR="$race_dir" "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>"$race_dir/symlink.err"
+  sym_rc=$?
+  if (( sym_rc != 0 )) && grep -q "symlinked lock path" "$race_dir/symlink.err"; then ok; else bad "a symlink at the lock path must be refused, rc=$sym_rc" "$(cat "$race_dir/symlink.err")"; fi
+  if [[ "$(cat "$race_dir/victim")" == "keep me" ]]; then ok; else bad "the symlink target was modified through the lock path"; fi
+  if [[ -L "$race_dir/baseline.lockdir" ]]; then ok; else bad "the launcher must not replace a symlink at the lock path"; fi
+
+  rm -f "$race_dir/baseline.lockdir"
+  mkdir "$race_dir/elsewhere"
+  ln -s "$race_dir/elsewhere" "$race_dir/baseline.lockdir"
+  OMARCHY_RDP_STATE_DIR="$race_dir" "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>"$race_dir/symlink.err"
+  sym_rc=$?
+  if (( sym_rc != 0 )) && grep -q "symlinked lock path" "$race_dir/symlink.err"; then ok; else bad "a symlink to a directory at the lock path must be refused too, rc=$sym_rc" "$(cat "$race_dir/symlink.err")"; fi
+
+  # A plain file where the directory belongs is refused as well, rather than
+  # locked as if it were the directory.
+  rm -f "$race_dir/baseline.lockdir"
+  : > "$race_dir/baseline.lockdir"
+  OMARCHY_RDP_STATE_DIR="$race_dir" "$fake_bin/omarchy-rdp-launch" baseline >/dev/null 2>"$race_dir/symlink.err"
+  sym_rc=$?
+  if (( sym_rc != 0 )) && grep -q "could not create lock directory" "$race_dir/symlink.err"; then ok; else bad "a regular file at the lock path must be refused, rc=$sym_rc" "$(cat "$race_dir/symlink.err")"; fi
 
   cp bin/omarchy-rdp-launch "$fake_bin/omarchy-rdp-launch"
   chmod +x "$fake_bin/omarchy-rdp-launch"

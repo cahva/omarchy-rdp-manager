@@ -399,15 +399,35 @@ if (( ! test_only )); then
   # two at once: both proceeded.
   #
   # The kernel releases the lock when this process dies, SIGKILL included, so
-  # there is no stale lock to reap and the file is never removed: unlinking a
-  # lock another process may be holding is its own race.
-  lock_file="$STATE_DIR/$id.lock"
+  # there is no stale lock to reap and the directory is never removed: unlinking
+  # a lock another process may be holding is its own race.
+  #
+  # The lock is a directory, not a file. `exec 9>file` follows a symlink at the
+  # lock path and truncates whatever it points to before flock runs, so a link
+  # planted there would empty any file this user can write. Only this user can
+  # plant one, since the state directory was just verified 0700 and ours, but
+  # the directory form costs nothing and closes the pattern outright: mkdir is
+  # atomic and never creates through a symlink, it fails with EEXIST on one,
+  # and a directory is opened read-only, so no path here can truncate anything.
+  # flock takes a directory descriptor exactly as it takes a file's.
+  lock_dir="$STATE_DIR/$id.lockdir"
   # Required, not optional. Skipping the lock when flock is missing would leave
   # exactly the race this is here to close, silently. It ships in util-linux, so
   # its absence is a broken system rather than a configuration to tolerate, and
   # jq is treated the same way above.
   [[ -x $FLOCK ]] || die "flock not found at $FLOCK (install util-linux)"
-  exec 9>"$lock_file" || die "could not open $lock_file"
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    # Already there is the normal case for every launch after the first in a
+    # login session. A symlink, or anything that is not a directory, is not.
+    [[ -L $lock_dir ]] && die "refusing symlinked lock path $lock_dir"
+    [[ -d $lock_dir ]] || die "could not create lock directory $lock_dir"
+  fi
+  exec 9<"$lock_dir" || die "could not open $lock_dir"
+  # Validate what was actually opened rather than the path that was checked, so
+  # a swap between the two is caught: it must be a directory owned by this user.
+  if [[ "$(stat -L -c '%F %u' /dev/fd/9 2>/dev/null)" != "directory $(id -u)" ]]; then
+    die "refusing lock $lock_dir: the opened descriptor is not this user's directory"
+  fi
   if ! "$FLOCK" -n 9; then
     # Deliberately not through die(). The launcher that holds the lock may not
     # have written its state file yet, so there would be nothing to protect, and
