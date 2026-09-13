@@ -5,6 +5,31 @@
      conflict over this file. The release commit renames this heading to the
      version and bumps manifest.json, so the number is chosen from what
      actually shipped rather than guessed when the branch was opened. -->
+## 0.6.0
+
+### Added
+
+- Audio output and input toggles per connection. Remote sound plays on this
+  machine through FreeRDP's `/sound`, and this machine's default audio input,
+  usually the microphone, can be sent to the remote through `/microphone`
+  ([#31](https://github.com/cahva/omarchy-rdp-manager/pull/31), requested in
+  #29). Input is off unless the option is an explicit `true`, so a hand-edited
+  truthy value cannot start capture.
+
+### Changed
+
+- Remote audio now plays by default. Earlier versions never redirected audio,
+  so connections that were silent before start playing sound after updating.
+  Switch "Audio output" off per connection to get the old behaviour back.
+
+### Fixed
+
+- The per-connection launch lock is a directory opened read-only rather than a
+  file opened for writing, so a symlink planted at the lock path can no longer
+  be followed or have its target truncated
+  ([#33](https://github.com/cahva/omarchy-rdp-manager/pull/33)). Flagged in
+  the marketplace review of 0.5.0 (omacom/omarchy-plugin-marketplace#6124).
+
 ## 0.5.0
 
 ### Added
