@@ -258,6 +258,10 @@ In the panel:
 | `n` | New connection |
 | `Esc` | Close the panel, or back out of the form |
 
+In the form, Tab walks the controls. On a dropdown, typing a letter picks the
+next option whose label starts with it, and Esc backs out of the form from
+any control, not only a text field.
+
 `x` also deletes, because Omarchy's shared panel key handler reserves it for that
 across every panel and consumes it before this plugin sees it. Disconnect is `s`
 rather than `x` for that reason.
