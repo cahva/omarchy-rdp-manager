@@ -1004,5 +1004,77 @@ test("listRows with no groups is the plain connection list", function () {
   assert.deepStrictEqual(M.listRows([], {}), [])
 })
 
+test("listSections numbers each section's first row and keeps folded members", function () {
+  var conns = [
+    { id: "a", host: "h", user: "u", group: "Work" },
+    { id: "b", host: "h", user: "u" },
+    { id: "c", host: "h", user: "u", group: "Lab" },
+    { id: "d", host: "h", user: "u", group: "Work" }
+  ]
+  var secs = M.listSections(conns, { Lab: true })
+  assert.deepStrictEqual(secs.map(function (s) { return [s.name, s.rowIndex, s.count, s.collapsed] }),
+    [["", 0, 1, false], ["Lab", 1, 1, true], ["Work", 2, 2, false]])
+  assert.deepStrictEqual(secs[1].members.map(function (c) { return c.id }), ["c"])
+  // Rows are the sections flattened, so both agree on every index.
+  var rows = M.listRows(conns, { Lab: true })
+  assert.strictEqual(rows.length, 5)
+  assert.strictEqual(rows[secs[2].rowIndex].name, "Work")
+  assert.strictEqual(rows[secs[2].rowIndex + 1].conn.id, "a")
+  assert.deepStrictEqual(M.listSections([], {}), [])
+})
+
+// Three ungrouped, then a group of five, three columns wide:
+//   0 1 2      <- loose
+//   #G         <- row 3
+//   4 5 6
+//   7 8
+function columnsFixture() {
+  var conns = []
+  for (var i = 0; i < 3; i++) conns.push({ id: "l" + i, host: "h", user: "u" })
+  for (var j = 0; j < 5; j++) conns.push({ id: "g" + j, host: "h", user: "u", group: "G" })
+  return M.listSections(conns, {})
+}
+
+test("cursorAfterMove with one column is plain up and down", function () {
+  var secs = columnsFixture()
+  assert.strictEqual(M.cursorAfterMove(secs, 0, 0, 1, 1), 1)
+  assert.strictEqual(M.cursorAfterMove(secs, 2, 0, 1, 1), 3, "into the header")
+  assert.strictEqual(M.cursorAfterMove(secs, 3, 0, 1, 1), 4, "off the header")
+  assert.strictEqual(M.cursorAfterMove(secs, 4, 0, -1, 1), 3, "back onto the header")
+  assert.strictEqual(M.cursorAfterMove(secs, 8, 0, 1, 1), 8, "the end stays put")
+  assert.strictEqual(M.cursorAfterMove(secs, 0, 0, -1, 1), 0)
+  assert.strictEqual(M.cursorAfterMove(secs, 5, 1, 0, 1), 5, "no sideways movement in one column")
+  assert.strictEqual(M.cursorAfterMove(secs, 5, -1, 0, 1), 5)
+})
+
+test("cursorAfterMove steps a grid row at a time across three columns", function () {
+  var secs = columnsFixture()
+  assert.strictEqual(M.cursorAfterMove(secs, 4, 0, 1, 3), 7, "down a row")
+  assert.strictEqual(M.cursorAfterMove(secs, 6, 0, 1, 3), 8, "down from a column with nothing below lands on the section's last row")
+  assert.strictEqual(M.cursorAfterMove(secs, 7, 0, -1, 3), 4, "up a row")
+  assert.strictEqual(M.cursorAfterMove(secs, 5, 0, -1, 3), 3, "up from the top row is the header")
+  assert.strictEqual(M.cursorAfterMove(secs, 1, 0, 1, 3), 3, "down from the loose run's only row is the next header")
+  assert.strictEqual(M.cursorAfterMove(secs, 1, 0, -1, 3), 0, "up from the very top clamps")
+  assert.strictEqual(M.cursorAfterMove(secs, 3, 0, -1, 3), 2, "up from a header is the previous section's last row")
+})
+
+test("cursorAfterMove steps sideways within a section and stops at its edge", function () {
+  var secs = columnsFixture()
+  assert.strictEqual(M.cursorAfterMove(secs, 4, 1, 0, 3), 5)
+  assert.strictEqual(M.cursorAfterMove(secs, 6, 1, 0, 3), 7, "reading order wraps to the next grid row")
+  assert.strictEqual(M.cursorAfterMove(secs, 8, 1, 0, 3), 8, "no further")
+  assert.strictEqual(M.cursorAfterMove(secs, 4, -1, 0, 3), 4, "the section's first member has nothing to its left")
+  assert.strictEqual(M.cursorAfterMove(secs, 2, 1, 0, 3), 2, "the loose run does not spill into the header")
+  assert.strictEqual(M.cursorAfterMove(secs, 3, 1, 0, 3), 3, "a header ignores sideways here; the view folds instead")
+})
+
+test("cursorAfterMove copes with a folded group, a bad index and an empty list", function () {
+  var conns = [{ id: "a", host: "h", user: "u", group: "G" }, { id: "b", host: "h", user: "u", group: "H" }]
+  var secs = M.listSections(conns, { G: true })
+  assert.strictEqual(M.cursorAfterMove(secs, 0, 0, 1, 3), 1, "a folded header is one stop")
+  assert.strictEqual(M.cursorAfterMove(secs, 99, 0, 1, 3), 2, "an index past the end is clamped first")
+  assert.strictEqual(M.cursorAfterMove([], 0, 0, 1, 3), -1)
+})
+
 console.log("model.test.js: " + passed + " passed" +
   (process.exitCode ? " (with failures above)" : ""))

@@ -101,7 +101,18 @@ Item {
 
   // The list as drawn — connections and group headers in one array, folded
   // groups reduced to their header — and what the cursor walks.
+  readonly property var sections: Model.listSections(root.connections, root.collapsedGroups)
   readonly property var rows: Model.listRows(root.connections, root.collapsedGroups)
+
+  // How many connections sit side by side within a section. One in the popup,
+  // whose width is fixed; in the window, as many as fit at a comfortable row
+  // width, so a wide window shows a group at a glance instead of as a column
+  // to scroll. The groups themselves always stack.
+  readonly property int columnGap: Style.space(6)
+  readonly property int minColumnWidth: Style.space(340)
+  readonly property int listColumns: root.inWindow
+    ? Math.max(1, Math.floor((root.width + columnGap) / (minColumnWidth + columnGap)))
+    : 1
   readonly property var groupNames: Model.groupNames(root.connections)
   // The plain CONNECTIONS heading only earns its place when something sits
   // under it: a list that is nothing but groups starts with the first group.
@@ -156,14 +167,12 @@ Item {
     if (root.view !== "list") return
     ensureCursor()
     if (rowCount() === 0) return
-    // Left folds a group, right unfolds it; on a connection row they do nothing.
-    if (dx !== 0) {
-      var r = selectedRow()
-      if (r && r.kind === "group") root.setGroupCollapsed(r.name, dx < 0)
-      return
-    }
-    if (dy === 0) return
-    selectedIndex = Math.max(0, Math.min(rowCount() - 1, selectedIndex + dy))
+    // Left folds a group, right unfolds it. On a connection the move is a
+    // grid move — one place sideways, a whole row up or down — which with a
+    // single column is the plain step it always was.
+    var r = selectedRow()
+    if (dx !== 0 && r && r.kind === "group") { root.setGroupCollapsed(r.name, dx < 0); return }
+    selectedIndex = Model.cursorAfterMove(root.sections, selectedIndex, dx, dy, root.listColumns)
   }
 
   function selectedRow() {
@@ -583,11 +592,47 @@ Item {
           Column {
             id: rowColumn
             width: parent.width
-            spacing: Style.space(6)
+            spacing: root.columnGap
 
             Repeater {
-              model: root.rows
-              ListRow { width: rowColumn.width }
+              model: root.sections
+
+              Column {
+                id: sectionItem
+                required property var modelData
+                required property int index
+                readonly property bool grouped: modelData.name !== ""
+                width: rowColumn.width
+                spacing: root.columnGap
+
+                GroupRow {
+                  visible: sectionItem.grouped
+                  width: parent.width
+                  row: sectionItem.modelData
+                  rowIndex: sectionItem.modelData.rowIndex
+                }
+
+                Grid {
+                  id: memberGrid
+                  width: parent.width
+                  columns: root.listColumns
+                  columnSpacing: root.columnGap
+                  rowSpacing: root.columnGap
+                  readonly property real cellWidth:
+                    (width - columnSpacing * (columns - 1)) / columns
+
+                  Repeater {
+                    model: sectionItem.modelData.collapsed ? [] : sectionItem.modelData.members
+                    ConnectionRow {
+                      required property var modelData
+                      required property int index
+                      width: memberGrid.cellWidth
+                      conn: modelData
+                      rowIndex: sectionItem.modelData.rowIndex + (sectionItem.grouped ? 1 : 0) + index
+                    }
+                  }
+                }
+              }
             }
           }
 
@@ -947,33 +992,6 @@ Item {
 
   // ------------------------------------------------------------ row delegates
 
-  // One delegate for the mixed list. The two real rows are picked by kind and
-  // built inside this item, whose scope they share — that is what lets them
-  // keep `required` properties while a Repeater only ever sees one type.
-  component ListRow: Item {
-    id: listRow
-    required property var modelData
-    required property int index
-
-    implicitHeight: rowLoader.height
-    height: implicitHeight
-
-    Loader {
-      id: rowLoader
-      width: parent.width
-      sourceComponent: listRow.modelData.kind === "group" ? groupChoice : connectionChoice
-    }
-
-    Component {
-      id: groupChoice
-      GroupRow { row: listRow.modelData; rowIndex: listRow.index }
-    }
-
-    Component {
-      id: connectionChoice
-      ConnectionRow { conn: listRow.modelData.conn; rowIndex: listRow.index }
-    }
-  }
 
   // A group's heading: the section-header look, with a chevron for its fold
   // state and the member count once it is folded and they are out of sight.

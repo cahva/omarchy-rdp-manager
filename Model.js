@@ -881,17 +881,26 @@ function groupNames(connections) {
   return out
 }
 
-// The list as rows, in the order they are drawn: ungrouped connections first
-// in file order, then each group as a header row followed by its members —
-// unless `collapsed[name]` is true, in which case the header stands alone.
-// Rows are { kind: "connection", conn } or { kind: "group", name, count,
-// collapsed }. The cursor walks this array, so a folded group is one stop.
-function listRows(connections, collapsed) {
+// The list as sections, in the order they are drawn: the ungrouped
+// connections (name "") first if there are any, then each group. A section is
+// { name, members, count, collapsed, rowIndex }: `members` in file order,
+// `rowIndex` the flat index of the section's first row — its header for a
+// group, its first connection for the ungrouped run — so a member's own row
+// index is rowIndex, plus one for the header, plus its place in `members`.
+// A collapsed group keeps its members here (that is what `count` shows) but
+// contributes only its header to the rows.
+function listSections(connections, collapsed) {
   var list = asList(connections)
   var folded = collapsed && typeof collapsed === "object" ? collapsed : {}
-  var rows = []
+  var out = []
+  var next = 0
+  var loose = []
   for (var i = 0; i < list.length; i++) {
-    if (!trim(list[i] ? list[i].group : "")) rows.push({ kind: "connection", conn: list[i] })
+    if (!trim(list[i] ? list[i].group : "")) loose.push(list[i])
+  }
+  if (loose.length > 0) {
+    out.push({ name: "", members: loose, count: loose.length, collapsed: false, rowIndex: 0 })
+    next = loose.length
   }
   var names = groupNames(list)
   for (var n = 0; n < names.length; n++) {
@@ -900,11 +909,73 @@ function listRows(connections, collapsed) {
       if (trim(list[j].group) === names[n]) members.push(list[j])
     }
     var isCollapsed = folded[names[n]] === true
-    rows.push({ kind: "group", name: names[n], count: members.length, collapsed: isCollapsed })
-    if (isCollapsed) continue
-    for (var m = 0; m < members.length; m++) rows.push({ kind: "connection", conn: members[m] })
+    out.push({ name: names[n], members: members, count: members.length, collapsed: isCollapsed, rowIndex: next })
+    next += 1 + (isCollapsed ? 0 : members.length)
+  }
+  return out
+}
+
+// The same list flattened to what the cursor walks: { kind: "connection",
+// conn } or { kind: "group", name, count, collapsed }, a folded group being
+// one stop.
+function listRows(connections, collapsed) {
+  var sections = listSections(connections, collapsed)
+  var rows = []
+  for (var s = 0; s < sections.length; s++) {
+    var sec = sections[s]
+    if (sec.name !== "") rows.push({ kind: "group", name: sec.name, count: sec.count, collapsed: sec.collapsed })
+    if (sec.collapsed) continue
+    for (var m = 0; m < sec.members.length; m++) rows.push({ kind: "connection", conn: sec.members[m] })
   }
   return rows
+}
+
+// Where the cursor lands after a move from row `index`, with each section's
+// members laid out `columns` wide in reading order. Down and up step a whole
+// grid row, and cross into the neighbouring section when there is none left
+// in this one: down from the last row lands on the next section's first row,
+// up from the first row lands on the group's header. Left and right step one
+// place and stop at the section's edge. With one column this is plain ±1
+// vertical movement and no horizontal movement at all, which is what the
+// popup does; the view handles left and right on a header itself, since
+// there they mean fold and unfold.
+function cursorAfterMove(sections, index, dx, dy, columns) {
+  var cols = Math.max(1, Math.floor(Number(columns) || 1))
+  var total = 0
+  for (var t = 0; t < sections.length; t++) {
+    total += (sections[t].name !== "" ? 1 : 0) + (sections[t].collapsed ? 0 : sections[t].members.length)
+  }
+  if (total === 0) return -1
+  var at = Math.max(0, Math.min(total - 1, Number(index) || 0))
+  for (var s = 0; s < sections.length; s++) {
+    var sec = sections[s]
+    var hasHeader = sec.name !== ""
+    var first = sec.rowIndex + (hasHeader ? 1 : 0)
+    var shown = sec.collapsed ? 0 : sec.members.length
+    var end = first + shown
+    if (at >= end) continue
+    if (hasHeader && at === sec.rowIndex) {
+      // A header: vertical moves step one row; horizontal ones are the view's.
+      if (dy > 0) return Math.min(total - 1, at + 1)
+      if (dy < 0) return Math.max(0, at - 1)
+      return at
+    }
+    var p = at - first
+    if (dx !== 0 && cols > 1) {
+      var q = p + (dx > 0 ? 1 : -1)
+      return (q >= 0 && q < shown) ? first + q : at
+    }
+    if (dy > 0) {
+      if (p + cols < shown) return at + cols
+      return Math.min(total - 1, end)
+    }
+    if (dy < 0) {
+      if (p - cols >= 0) return at - cols
+      return hasHeader ? sec.rowIndex : Math.max(0, at - 1)
+    }
+    return at
+  }
+  return at
 }
 
 // ------------------------------------------------------------- list mutation
@@ -971,7 +1042,7 @@ if (typeof module !== "undefined") module.exports = {
   normalizeSession, parseStatus, sessionMap, isLive, summarize, pollInterval,
   formatDuration, endpointFor, formatHostPort, driveSummary, rowStatus, tooltipFor, heroMeta,
   upsertConnection, removeConnection, findConnection, blankConnection,
-  groupNames, listRows,
+  groupNames, listSections, listRows, cursorAfterMove,
   autoResolution, parseResolution, normalizeResolution, normalizeDisplayMode, resolveResolution,
   DEFAULT_PORT, DEFAULT_GATEWAY_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS, SCALE_VALUES,
   AUTO_MAX_WIDTH, AUTO_MAX_HEIGHT
