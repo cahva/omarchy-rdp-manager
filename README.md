@@ -239,6 +239,17 @@ omarchy bar set io.github.cahva.rdp-manager hideWhenIdle true
 
 Click the bar icon, or bind `omarchy-shell shell toggle io.github.cahva.rdp-manager`.
 
+The same list also opens as a real window: middle-click the bar icon, press `w`
+in the panel, or click the window button in the panel's header. It is tiled by
+Hyprland like any other app, can be resized, and stays open while you work, which
+the panel cannot. For a keybind, `window` shows it, brings it forward if it is
+on another workspace, or hides it when it already has focus:
+
+```lua
+-- ~/.config/hypr/bindings.lua
+o.bind("SUPER + R", "RDP Manager", "omarchy-shell io.github.cahva.rdp-manager window")
+```
+
 | State | Bar icon |
 |---|---|
 | Idle | Plain glyph (hidden entirely with `hideWhenIdle`) |
@@ -246,7 +257,7 @@ Click the bar icon, or bind `omarchy-shell shell toggle io.github.cahva.rdp-mana
 | Connected | Highlighted, with a count when more than one session is live |
 | Last attempt failed | Tinted urgent; the reason is in the tooltip |
 
-In the panel:
+In the panel or the window:
 
 | Key | Action |
 |---|---|
@@ -256,7 +267,8 @@ In the panel:
 | `e` / `d` | Edit / delete |
 | `t` | Test the connection without opening a window |
 | `n` | New connection |
-| `Esc` | Close the panel, or back out of the form |
+| `w` | Open the window (panel only) |
+| `Esc` | Close the panel or window, or back out of the form |
 
 `x` also deletes, because Omarchy's shared panel key handler reserves it for that
 across every panel and consumes it before this plugin sees it. Disconnect is `s`
@@ -289,6 +301,9 @@ omarchy-shell io.github.cahva.rdp-manager list
 omarchy-shell io.github.cahva.rdp-manager status
 omarchy-shell io.github.cahva.rdp-manager connect my-server
 omarchy-shell io.github.cahva.rdp-manager disconnect my-server
+omarchy-shell io.github.cahva.rdp-manager window      # show, focus or hide the window
+omarchy-shell io.github.cahva.rdp-manager show        # the window, definitely up
+omarchy-shell io.github.cahva.rdp-manager hide        # the window, definitely gone
 ```
 
 ## Hyprland window rules
@@ -403,10 +418,13 @@ one. Only `omarchy restart shell` picks up a `.qml` edit.
 `bin/` and `Model.js` are different. The launcher is a script executed afresh on
 every connect, so a change there is live as soon as `dev-install.sh` has run.
 
-`Model.js` holds every pure function and is shared by `Service.qml`, `Panel.qml` and
-the tests. `Service.qml` is loaded **once per shell session** and owns all state, the
-poll timer and every file write. `Panel.qml` is built **once per monitor** and is a
-view — putting state there gives a two-monitor user two of it.
+`Model.js` holds every pure function and is shared by `Service.qml`, the QML views
+and the tests. `Service.qml` is loaded **once per shell session** and owns all
+state, the poll timer, every file write, and the window. `Panel.qml` is built
+**once per monitor** and is a view — putting state there gives a two-monitor user
+two of it. What the panel shows lives in `ConnectionsView.qml`, which
+`ConnectionsWindow.qml` hosts too, so a change to the list or the form lands in
+both surfaces at once.
 
 Two things worth knowing if you hack on this:
 
