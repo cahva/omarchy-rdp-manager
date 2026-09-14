@@ -94,11 +94,30 @@ Item {
   property bool cursorActive: false
   property string confirmDeleteId: ""
 
+  // Which groups are folded, by name. Per surface and in memory only: it is
+  // how this list is being looked at right now, not something about the
+  // connections, so it has no business in connections.json.
+  property var collapsedGroups: ({})
+
+  // The list as drawn — connections and group headers in one array, folded
+  // groups reduced to their header — and what the cursor walks.
+  readonly property var rows: Model.listRows(root.connections, root.collapsedGroups)
+  readonly property var groupNames: Model.groupNames(root.connections)
+  // The plain CONNECTIONS heading only earns its place when something sits
+  // under it: a list that is nothing but groups starts with the first group.
+  readonly property bool ungroupedHeaderVisible: root.groupNames.length === 0
+    || (root.rows.length > 0 && root.rows[0].kind === "connection")
+
   // Form state. Held here rather than in the service because two monitors can
   // have the form open on different connections at the same time.
   property bool formIsNew: true
   property string formId: ""
   property string formName: ""
+  // The Group dropdown's value: "" for none, an existing group's name, or
+  // newGroupValue, which reveals a text field whose contents live in formGroupNew.
+  property string formGroup: ""
+  property string formGroupNew: ""
+  readonly property string newGroupValue: "\u0000new"
   property string formHost: ""
   // RD Gateway as "host" or "host:port", empty for a direct connection. Split
   // apart on save the same way Host is.
@@ -123,7 +142,7 @@ Item {
 
   // -------------------------------------------------------------- navigation
 
-  function rowCount() { return Model.asList(root.connections).length }
+  function rowCount() { return root.rows.length }
 
   function ensureCursor() {
     var n = rowCount()
@@ -136,20 +155,47 @@ Item {
     cursorActive = true
     if (root.view !== "list") return
     ensureCursor()
-    if (dy === 0 || rowCount() === 0) return
+    if (rowCount() === 0) return
+    // Left folds a group, right unfolds it; on a connection row they do nothing.
+    if (dx !== 0) {
+      var r = selectedRow()
+      if (r && r.kind === "group") root.setGroupCollapsed(r.name, dx < 0)
+      return
+    }
+    if (dy === 0) return
     selectedIndex = Math.max(0, Math.min(rowCount() - 1, selectedIndex + dy))
   }
 
+  function selectedRow() {
+    if (selectedIndex < 0 || selectedIndex >= root.rows.length) return null
+    return root.rows[selectedIndex]
+  }
+
+  // The connection under the cursor, or null on a group header — which is what
+  // makes the per-connection keys (c, s, e, d, t) harmless there.
   function selectedConnection() {
-    var list = Model.asList(root.connections)
-    if (selectedIndex < 0 || selectedIndex >= list.length) return null
-    return list[selectedIndex]
+    var r = selectedRow()
+    return r && r.kind === "connection" ? r.conn : null
   }
 
   function activateCursor() {
     if (root.view !== "list") return
-    var conn = selectedConnection()
-    if (conn) root.activate(conn.id)
+    var r = selectedRow()
+    if (!r) return
+    if (r.kind === "group") root.setGroupCollapsed(r.name, !r.collapsed)
+    else root.activate(r.conn.id)
+  }
+
+  // Replace rather than mutate: a `var` property only notifies on assignment,
+  // so writing into the existing object would leave `rows` stale.
+  function setGroupCollapsed(name, fold) {
+    var next = {}
+    for (var k in collapsedGroups) if (collapsedGroups[k] === true) next[k] = true
+    if (fold) next[name] = true
+    else delete next[name]
+    collapsedGroups = next
+    // The header keeps its index either way; only rows after it move.
+    ensureCursor()
   }
 
   // Enter on a row does the obvious thing for its current state.
@@ -221,6 +267,18 @@ Item {
 
   readonly property var resolutionOptions: root.buildResolutionOptions()
 
+  // None, every group in use, and a way to start a new one. Rebuilt whenever
+  // the connections change, so a group created a moment ago is on the list.
+  function buildGroupOptions() {
+    var out = [{ value: "", label: "none" }]
+    for (var i = 0; i < root.groupNames.length; i++) {
+      out.push({ value: root.groupNames[i], label: root.groupNames[i] })
+    }
+    out.push({ value: root.newGroupValue, label: "new group..." })
+    return out
+  }
+  readonly property var groupOptions: root.buildGroupOptions()
+
   function openForm(conn) {
     root.formErrors = ({})
     root.formNotice = ""
@@ -229,6 +287,10 @@ Item {
       root.formIsNew = false
       root.formId = conn.id
       root.formName = conn.name
+      // Its own group is always on the dropdown: the list is built from the
+      // connections, and this one is among them.
+      root.formGroup = conn.group
+      root.formGroupNew = ""
       // Recombined for display so editing still shows the full address, the
       // way it did before host/port were split apart on disk. formConnection()
       // splits it right back out on save.
@@ -250,6 +312,8 @@ Item {
       root.formIsNew = true
       root.formId = ""
       root.formName = ""
+      root.formGroup = ""
+      root.formGroupNew = ""
       root.formHost = ""
       root.formGateway = ""
       root.formUser = ""
@@ -303,6 +367,7 @@ Item {
     return {
       id: id,
       name: root.formName,
+      group: root.formGroup === root.newGroupValue ? root.formGroupNew : root.formGroup,
       host: hp.host,
       port: hp.port !== null ? hp.port : fallbackPort,
       user: root.formUser,
@@ -498,6 +563,7 @@ Item {
           spacing: Style.space(10)
 
           PanelSectionHeader {
+            visible: root.ungroupedHeaderVisible
             text: "CONNECTIONS"
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -520,14 +586,8 @@ Item {
             spacing: Style.space(6)
 
             Repeater {
-              model: root.connections
-              ConnectionRow {
-                required property var modelData
-                required property int index
-                width: rowColumn.width
-                conn: modelData
-                rowIndex: index
-              }
+              model: root.rows
+              ListRow { width: rowColumn.width }
             }
           }
 
@@ -633,6 +693,25 @@ Item {
               errorText: root.formErrors.name || ""
               autoFocus: true
               onEdited: function(t) { root.formName = t }
+              onSubmitted: root.saveForm()
+            }
+
+            Dropdown {
+              width: parent.width
+              label: "Group"
+              value: root.formGroup
+              fontFamily: root.fontFamily
+              options: root.groupOptions
+              onChanged: function(v) { root.formGroup = v }
+            }
+
+            FormField {
+              visible: root.formGroup === root.newGroupValue
+              width: parent.width
+              label: "New group"
+              text: root.formGroupNew
+              placeholder: "Lab"
+              onEdited: function(t) { root.formGroupNew = t }
               onSubmitted: root.saveForm()
             }
 
@@ -866,7 +945,93 @@ Item {
     }
   }
 
-  // ------------------------------------------------------------- row delegate
+  // ------------------------------------------------------------ row delegates
+
+  // One delegate for the mixed list. The two real rows are picked by kind and
+  // built inside this item, whose scope they share — that is what lets them
+  // keep `required` properties while a Repeater only ever sees one type.
+  component ListRow: Item {
+    id: listRow
+    required property var modelData
+    required property int index
+
+    implicitHeight: rowLoader.height
+    height: implicitHeight
+
+    Loader {
+      id: rowLoader
+      width: parent.width
+      sourceComponent: listRow.modelData.kind === "group" ? groupChoice : connectionChoice
+    }
+
+    Component {
+      id: groupChoice
+      GroupRow { row: listRow.modelData; rowIndex: listRow.index }
+    }
+
+    Component {
+      id: connectionChoice
+      ConnectionRow { conn: listRow.modelData.conn; rowIndex: listRow.index }
+    }
+  }
+
+  // A group's heading: the section-header look, with a chevron for its fold
+  // state and the member count once it is folded and they are out of sight.
+  component GroupRow: CursorSurface {
+    id: group
+    required property var row
+    required property int rowIndex
+
+    readonly property string glyphOpen: "\u{F0140}"   // nf-md-chevron-down
+    readonly property string glyphClosed: "\u{F0142}" // nf-md-chevron-right
+
+    hasCursor: root.cursorActive && root.selectedIndex === group.rowIndex
+    foreground: root.foreground
+    implicitHeight: groupLabel.implicitHeight + Style.spacing.rowPaddingX
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      acceptedButtons: Qt.LeftButton
+      cursorShape: Qt.PointingHandCursor
+      onEntered: { root.cursorActive = true; root.selectedIndex = group.rowIndex }
+      onClicked: root.setGroupCollapsed(group.row.name, !group.row.collapsed)
+    }
+
+    Row {
+      id: groupLabel
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.leftMargin: Style.spacing.rowPaddingX
+      anchors.rightMargin: Style.spacing.rowPaddingX
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(6)
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: group.row.collapsed ? group.glyphClosed : group.glyphOpen
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      PanelSectionHeader {
+        anchors.verticalCenter: parent.verticalCenter
+        text: group.row.name.toUpperCase()
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: group.row.collapsed
+        text: String(group.row.count)
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+    }
+  }
 
   component ConnectionRow: CursorSurface {
     id: row

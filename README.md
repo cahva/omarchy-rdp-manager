@@ -137,6 +137,7 @@ contains a password** — only a `"secret": "keyring"` marker.
     {
       "id": "windows-build-server",
       "name": "Windows build server",
+      "group": "Lab",
       "host": "10.0.0.5",
       "port": 3389,
       "user": "Administrator",
@@ -165,6 +166,11 @@ Edits are picked up live — no reload needed. Notes:
 - `id` is generated from the name and is then **immutable**: it is the keyring
   lookup key and the `/wm-class` suffix used to detect the session's window.
   Changing it by hand orphans the stored password.
+- `group` is the heading the list files the connection under, or `""` for
+  none. It is a label, not an id: `Work` and `work` are two groups, sorted
+  next to each other. Ungrouped connections come first, then each group in
+  alphabetical order. The form offers every group in use plus "new group",
+  so a typo cannot quietly split one group in two.
 - `domain` is honoured by the launcher but has no form field yet.
 - `port` has no dedicated form field either, but the Host field shows and
   accepts `host:port` as one string — typing it in splits `host`/`port` apart
@@ -267,8 +273,14 @@ In the panel or the window:
 | `e` / `d` | Edit / delete |
 | `t` | Test the connection without opening a window |
 | `n` | New connection |
+| `Enter`, `h` / `l` | On a group heading: fold or unfold it |
 | `w` | Open the window (panel only) |
 | `Esc` | Close the panel or window, or back out of the form |
+
+Connections with a `group` sit under a heading of their own, which folds on a
+click or on `Enter`, `h` and `l`, and shows how many it hides while folded. Fold
+state belongs to the panel or window it was folded in and is not written
+anywhere; a shell restart unfolds everything.
 
 `x` also deletes, because Omarchy's shared panel key handler reserves it for that
 across every panel and consumes it before this plugin sees it. Disconnect is `s`
