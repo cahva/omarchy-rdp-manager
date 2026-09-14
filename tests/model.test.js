@@ -943,5 +943,66 @@ test("blankConnection is a valid starting point once named", function () {
   assert.strictEqual(M.validateConnection(blank, []).ok, true)
 })
 
+// --------------------------------------------------------------------- groups
+
+test("normalizeConnection keeps a trimmed group and defaults it to none", function () {
+  assert.strictEqual(M.normalizeConnection({ id: "a", host: "h", user: "u", group: "  Lab " }).group, "Lab")
+  assert.strictEqual(M.normalizeConnection({ id: "a", host: "h", user: "u" }).group, "")
+  assert.strictEqual(M.blankConnection().group, "")
+})
+
+test("a group survives the round trip through connections.json", function () {
+  var conn = { id: "a", name: "A", host: "h", user: "u", group: "Lab" }
+  var again = M.parseConfig(M.serializeConfig([conn])).connections[0]
+  assert.strictEqual(again.group, "Lab")
+})
+
+test("groupNames lists each group once, sorted without regard to case", function () {
+  var conns = [
+    { id: "a", host: "h", user: "u", group: "work" },
+    { id: "b", host: "h", user: "u", group: "Lab" },
+    { id: "c", host: "h", user: "u", group: "" },
+    { id: "d", host: "h", user: "u", group: "work" },
+    { id: "e", host: "h", user: "u", group: "Work" },
+    { id: "f", host: "h", user: "u" }
+  ]
+  assert.deepStrictEqual(M.groupNames(conns), ["Lab", "Work", "work"])
+  assert.deepStrictEqual(M.groupNames([]), [])
+})
+
+test("listRows puts ungrouped connections first, then each group under a header", function () {
+  var a = { id: "a", host: "h", user: "u", group: "Work" }
+  var b = { id: "b", host: "h", user: "u" }
+  var c = { id: "c", host: "h", user: "u", group: "Lab" }
+  var d = { id: "d", host: "h", user: "u", group: "Work" }
+  var rows = M.listRows([a, b, c, d], {})
+  assert.deepStrictEqual(rows.map(function (r) { return r.kind === "group" ? "#" + r.name : r.conn.id }),
+    ["b", "#Lab", "c", "#Work", "a", "d"])
+  assert.strictEqual(rows[3].count, 2)
+  assert.strictEqual(rows[3].collapsed, false)
+})
+
+test("listRows keeps a collapsed group's header and drops its members", function () {
+  var conns = [
+    { id: "a", host: "h", user: "u", group: "Work" },
+    { id: "c", host: "h", user: "u", group: "Lab" }
+  ]
+  var rows = M.listRows(conns, { Work: true })
+  assert.deepStrictEqual(rows.map(function (r) { return r.kind === "group" ? "#" + r.name : r.conn.id }),
+    ["#Lab", "c", "#Work"])
+  assert.strictEqual(rows[2].collapsed, true)
+  assert.strictEqual(rows[2].count, 1, "the count still says what is folded away")
+  // Only an exact name folds; anything else in the map is ignored.
+  assert.strictEqual(M.listRows(conns, { work: true, Lab: "yes" }).length, 4)
+  assert.strictEqual(M.listRows(conns, null).length, 4)
+})
+
+test("listRows with no groups is the plain connection list", function () {
+  var conns = [{ id: "a", host: "h", user: "u" }, { id: "b", host: "h", user: "u" }]
+  var rows = M.listRows(conns, {})
+  assert.deepStrictEqual(rows.map(function (r) { return r.kind }), ["connection", "connection"])
+  assert.deepStrictEqual(M.listRows([], {}), [])
+})
+
 console.log("model.test.js: " + passed + " passed" +
   (process.exitCode ? " (with failures above)" : ""))

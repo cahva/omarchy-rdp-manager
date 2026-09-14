@@ -319,6 +319,9 @@ function normalizeConnection(conn) {
   return {
     id: trim(c.id),
     name: name,
+    // The heading the list files this connection under; "" is none. A label,
+    // not an id: two spellings are two groups, which is how the file reads.
+    group: trim(c.group),
     host: trim(c.host),
     port: normalizePort(c.port),
     user: trim(c.user),
@@ -856,6 +859,54 @@ function heroMeta(connections, sessions) {
   return parts.join(" · ")
 }
 
+// -------------------------------------------------------------------- groups
+
+// Every group in use, each once, ordered for a list: case-insensitively, with
+// a stable case-sensitive tiebreak so "work" and "Work" never swap places.
+function groupNames(connections) {
+  var list = asList(connections)
+  var seen = {}
+  var out = []
+  for (var i = 0; i < list.length; i++) {
+    var g = trim(list[i] ? list[i].group : "")
+    if (!g || seen[g]) continue
+    seen[g] = true
+    out.push(g)
+  }
+  out.sort(function (a, b) {
+    var al = a.toLowerCase(), bl = b.toLowerCase()
+    if (al !== bl) return al < bl ? -1 : 1
+    return a < b ? -1 : (a > b ? 1 : 0)
+  })
+  return out
+}
+
+// The list as rows, in the order they are drawn: ungrouped connections first
+// in file order, then each group as a header row followed by its members —
+// unless `collapsed[name]` is true, in which case the header stands alone.
+// Rows are { kind: "connection", conn } or { kind: "group", name, count,
+// collapsed }. The cursor walks this array, so a folded group is one stop.
+function listRows(connections, collapsed) {
+  var list = asList(connections)
+  var folded = collapsed && typeof collapsed === "object" ? collapsed : {}
+  var rows = []
+  for (var i = 0; i < list.length; i++) {
+    if (!trim(list[i] ? list[i].group : "")) rows.push({ kind: "connection", conn: list[i] })
+  }
+  var names = groupNames(list)
+  for (var n = 0; n < names.length; n++) {
+    var members = []
+    for (var j = 0; j < list.length; j++) {
+      if (trim(list[j].group) === names[n]) members.push(list[j])
+    }
+    var isCollapsed = folded[names[n]] === true
+    rows.push({ kind: "group", name: names[n], count: members.length, collapsed: isCollapsed })
+    if (isCollapsed) continue
+    for (var m = 0; m < members.length; m++) rows.push({ kind: "connection", conn: members[m] })
+  }
+  return rows
+}
+
 // ------------------------------------------------------------- list mutation
 
 function upsertConnection(connections, conn) {
@@ -897,6 +948,7 @@ function blankConnection() {
   return {
     id: "",
     name: "",
+    group: "",
     host: "",
     port: DEFAULT_PORT,
     user: "",
@@ -919,6 +971,7 @@ if (typeof module !== "undefined") module.exports = {
   normalizeSession, parseStatus, sessionMap, isLive, summarize, pollInterval,
   formatDuration, endpointFor, formatHostPort, driveSummary, rowStatus, tooltipFor, heroMeta,
   upsertConnection, removeConnection, findConnection, blankConnection,
+  groupNames, listRows,
   autoResolution, parseResolution, normalizeResolution, normalizeDisplayMode, resolveResolution,
   DEFAULT_PORT, DEFAULT_GATEWAY_PORT, CERT_POLICIES, DISPLAY_MODES, COMMON_RESOLUTIONS, SCALE_VALUES,
   AUTO_MAX_WIDTH, AUTO_MAX_HEIGHT
