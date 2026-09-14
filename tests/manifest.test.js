@@ -276,11 +276,13 @@ test("no term from the local private denylist appears in the repo", function () 
 // nothing for every user (#11).
 var CATCHER_RESERVED = ["j", "k", "l", "h", "x"]
 
+// The key bindings, the help footer and the tooltips all live in the view the
+// popup and the window share, not in the bar widget that hosts it.
 function panelSource() {
-  return fs.readFileSync(path.join(root, "Panel.qml"), "utf8")
+  return fs.readFileSync(path.join(root, "ConnectionsView.qml"), "utf8")
 }
 
-// The single-character keys Panel.qml binds in its onTextKey handler.
+// The single-character keys ConnectionsView.qml binds in its onTextKey handler.
 function boundKeys(src) {
   var body = src.slice(src.indexOf("function onTextKey"))
   body = body.slice(0, body.indexOf("\n  }"))
@@ -304,10 +306,18 @@ test("the help footer lists exactly the keys that are bound", function () {
   // The footer said "x disconnect" for a binding that could not fire. Docs and
   // code drifting apart is how #11 stayed invisible.
   var src = panelSource()
-  var footer = /text: "enter connect \/ focus · ([^"]+)"/.exec(src)
-  assert.ok(footer, "could not find the help footer in Panel.qml")
+  var start = src.indexOf('text: "enter connect / focus')
+  assert.ok(start !== -1, "could not find the help footer in ConnectionsView.qml")
+  // The footer is an expression, not one literal: the popup-only "w window"
+  // is appended conditionally. Every string literal up to the next property
+  // is part of it.
+  var expr = src.slice(start, src.indexOf("color:", start))
   var listed = []
-  footer[1].split("·").forEach(function (part) {
+  var footerText = ""
+  var lit = /"([^"]*)"/g
+  var lm
+  while ((lm = lit.exec(expr)) !== null) footerText += lm[1]
+  footerText.split("·").forEach(function (part) {
     var m = /^\s*([a-z])\s+\S/.exec(part)
     if (m) listed.push(m[1])
   })
