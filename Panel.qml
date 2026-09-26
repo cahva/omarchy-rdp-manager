@@ -671,6 +671,14 @@ Panel {
       width: parent.width
       spacing: Style.space(10)
 
+      // Esc backs out of the form from any control, not only a text field. A
+      // key nothing accepts climbs the item tree from whatever has focus, and
+      // a focused dropdown trigger (or toggle, or button) accepts Esc only
+      // while its popup is open, so from there it used to reach the key
+      // catcher, which is blocked while the form is up, and die. The text
+      // fields still answer it themselves, before it gets this far.
+      Keys.onEscapePressed: root.closeForm()
+
             FormField {
               width: parent.width
               label: "Name"
@@ -782,7 +790,7 @@ Panel {
               fontFamily: root.fontFamily
             }
 
-            Dropdown {
+            FormDropdown {
               width: parent.width
               label: "Display mode"
               value: root.formDisplayMode
@@ -801,7 +809,7 @@ Panel {
             // so this is only the size the window opens at. Calling it a
             // resolution there would be a lie, but hiding it would take away
             // the one thing that stops the window opening tiny.
-            Dropdown {
+            FormDropdown {
               width: parent.width
               label: root.formDisplayMode === "dynamic" ? "Starting size" : "Resolution"
               value: root.formResolution
@@ -834,7 +842,7 @@ Panel {
             // FreeRDP's /scale: only accepts these three values (xfreerdp3
             // --help) — this is DPI scaling of the remote desktop's own UI,
             // not the window-resize behavior above, and the two combine.
-            Dropdown {
+            FormDropdown {
               width: parent.width
               label: "Display scale"
               value: root.formScale
@@ -871,7 +879,7 @@ Panel {
               onToggledOption: root.formMicrophone = !root.formMicrophone
             }
 
-            Dropdown {
+            FormDropdown {
               width: parent.width
               label: "Certificate policy"
               value: root.formCert
@@ -1055,6 +1063,40 @@ Panel {
   }
 
   // ----------------------------------------------------------- form controls
+
+  // The kit's Dropdown, plus what a native select does with its popup closed:
+  // typing a letter picks the next option whose label starts with it, cycling
+  // round. The trigger accepts only Enter, Space, Down and (while open) Esc,
+  // so every other key climbs to here. While the popup is open its list owns
+  // the keyboard and nothing reaches this item; j/k and Enter work there.
+  component FormDropdown: Dropdown {
+    id: dropdown
+    fontFamily: root.fontFamily
+
+    Keys.onPressed: function(event) {
+      if (dropdown.popupOpen) return
+      var typed = String(event.text || "")
+      if (typed.length !== 1) return
+      if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
+      var key = typed.toLowerCase()
+      if (!/^[a-z0-9]$/.test(key)) return
+      var n = dropdown.options.length
+      var current = -1
+      for (var i = 0; i < n; i++) {
+        if (dropdown.optionValue(dropdown.options[i]) === dropdown.value) { current = i; break }
+      }
+      for (var step = 1; step <= n; step++) {
+        var candidate = dropdown.options[(current + step) % n]
+        if (dropdown.optionLabel(candidate).toLowerCase().charAt(0) !== key) continue
+        // Same two writes the popup's own selection makes.
+        var v = dropdown.optionValue(candidate)
+        dropdown.value = v
+        dropdown.changed(v)
+        event.accepted = true
+        return
+      }
+    }
+  }
 
   component FormField: Column {
     id: field
