@@ -22,11 +22,8 @@ This plugin keeps the convenience and drops the exposure.
 
 ## Install
 
-FreeRDP is not part of a stock Omarchy install, so install it first:
-
-```bash
-sudo pacman -S freerdp
-```
+FreeRDP is not part of a stock Omarchy install, so install the `freerdp` package
+from the Arch repositories first.
 
 Then add the plugin:
 
@@ -413,11 +410,10 @@ locked keyring surfaces as an error rather than hanging the bar. Unlock it and r
 
 ## Development
 
-```bash
-git clone https://github.com/cahva/omarchy-rdp-manager.git
-cd omarchy-rdp-manager
+From a clone of this repository:
 
-./dev-install.sh                 # rsync into ~/.config/omarchy/plugins/ + reload
+```bash
+./dev-sync.sh                    # rsync into ~/.config/omarchy/plugins/ + reload
 omarchy plugin enable io.github.cahva.rdp-manager right
 omarchy restart shell            # required after any .qml change, see below
 
@@ -434,7 +430,7 @@ the process, so even disabling and re-enabling the plugin re-instantiates the ol
 one. Only `omarchy restart shell` picks up a `.qml` edit.
 
 `bin/` and `Model.js` are different. The launcher is a script executed afresh on
-every connect, so a change there is live as soon as `dev-install.sh` has run.
+every connect, so a change there is live as soon as `dev-sync.sh` has run.
 
 `Model.js` holds every pure function and is shared by `Service.qml`, the QML views
 and the tests. `Service.qml` is loaded **once per shell session** and owns all
