@@ -63,7 +63,7 @@ function isValidId(id) {
 function uniqueId(name, takenIds) {
   var base = slugify(name)
   if (!base) return ""
-  var taken = {}
+  var taken = Object.create(null)
   var list = asList(takenIds)
   for (var i = 0; i < list.length; i++) taken[str(list[i])] = true
   if (!taken[base]) return base
@@ -350,7 +350,9 @@ function parseConfig(raw) {
   }
   var list = asList(parsed.connections)
   var out = []
-  var seen = {}
+  // Maps keyed by ids and names have no prototype throughout this file, or a
+  // key like "constructor" reads as already present.
+  var seen = Object.create(null)
   for (var i = 0; i < list.length; i++) {
     var c = normalizeConnection(list[i])
     // Drop entries that cannot be acted on. A duplicate id would make two
@@ -440,7 +442,7 @@ function validateConnection(conn, takenIds) {
     else if (d.path.charAt(0) !== "/") errors["drive." + i + ".path"] = "Use an absolute path"
   }
 
-  var names = {}
+  var names = Object.create(null)
   for (var j = 0; j < drives.length; j++) {
     var dn = normalizeDrive(drives[j]).name.toLowerCase()
     if (!dn) continue
@@ -715,7 +717,7 @@ function parseStatus(raw) {
 // Index sessions by connection id so a row can look its own state up in O(1).
 function sessionMap(sessions) {
   var list = asList(sessions)
-  var map = {}
+  var map = Object.create(null)
   for (var i = 0; i < list.length; i++) {
     var s = normalizeSession(list[i])
     if (s.id) map[s.id] = s
