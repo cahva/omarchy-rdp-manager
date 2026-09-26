@@ -134,7 +134,7 @@ test("every hardcoded plugin id matches manifest.json", function () {
     ["Service.qml", /IpcHandler\s*\{[\s\S]*?target: "([^"]+)"/],
     ["Panel.qml", /moduleName: "([^"]+)"/],
     ["Panel.qml", /readonly property string manifestPluginId: "([^"]+)"/],
-    ["dev-install.sh", /PLUGIN_ID=(\S+)/]
+    ["dev-sync.sh", /PLUGIN_ID=(\S+)/]
   ]
   sites.forEach(function (site) {
     var text = fs.readFileSync(path.join(root, site[0]), "utf8")
