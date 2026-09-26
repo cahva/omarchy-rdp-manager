@@ -382,7 +382,7 @@ Item {
 
   function mergePending(parsed) {
     var list = Model.asList(parsed)
-    var byId = {}
+    var byId = Object.create(null)
     for (var i = 0; i < list.length; i++) byId[String(list[i].id)] = true
 
     var now = Date.now()

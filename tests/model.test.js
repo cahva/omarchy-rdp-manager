@@ -1099,5 +1099,31 @@ test("cursorAfterMove copes with a folded group, a bad index and an empty list",
   assert.strictEqual(M.cursorAfterMove([], 0, 0, 1, 3), -1)
 })
 
+// ------------------------------------------------- Object.prototype keys
+
+// "constructor" is a valid id and a plausible share name, and a plain object
+// map reads it as already present.
+test("parseConfig keeps a connection whose id is constructor", function () {
+  var raw = JSON.stringify({ version: 1, connections: [
+    { id: "constructor", host: "h", user: "u" },
+    { id: "lab", host: "h", user: "u" },
+  ] })
+  assert.deepStrictEqual(M.parseConfig(raw).connections.map(function (c) { return c.id }), ["constructor", "lab"])
+})
+
+test("uniqueId does not treat constructor as taken", function () {
+  assert.strictEqual(M.uniqueId("Constructor", []), "constructor")
+})
+
+test("validateConnection accepts a share named constructor", function () {
+  var r = M.validateConnection({ id: "a", name: "A", host: "h", user: "u",
+                                 drives: [{ name: "constructor", path: "/tmp" }] }, [])
+  assert.deepStrictEqual(r.errors, {})
+})
+
+test("sessionMap has no session for constructor unless there is one", function () {
+  assert.strictEqual(M.sessionMap([])["constructor"], undefined)
+})
+
 console.log("model.test.js: " + passed + " passed" +
   (process.exitCode ? " (with failures above)" : ""))
