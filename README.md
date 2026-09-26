@@ -248,7 +248,9 @@ Click the bar icon, or bind `omarchy-shell shell toggle io.github.cahva.rdp-mana
 The same list also opens as a real window: middle-click the bar icon, press `w`
 in the panel, or click the window button in the panel's header. It is tiled by
 Hyprland like any other app, can be resized, and stays open while you work, which
-the panel cannot. For a keybind, `window` shows it, brings it forward if it is
+the panel cannot. When it is wide enough, the connections within each group sit
+side by side in as many columns as fit; the groups themselves always stack, and
+`h` / `l` step sideways while `j` / `k` step a row. For a keybind, `window` shows it, brings it forward if it is
 on another workspace, or hides it when it already has focus:
 
 ```lua
