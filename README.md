@@ -282,6 +282,10 @@ click or on `Enter`, `h` and `l`, and shows how many it hides while folded. Fold
 state belongs to the panel or window it was folded in and is not written
 anywhere; a shell restart unfolds everything.
 
+In the form, Tab walks the controls. On a dropdown, typing a letter picks the
+next option whose label starts with it, and Esc backs out of the form from
+any control, not only a text field.
+
 `x` also deletes, because Omarchy's shared panel key handler reserves it for that
 across every panel and consumes it before this plugin sees it. Disconnect is `s`
 rather than `x` for that reason.
