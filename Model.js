@@ -968,11 +968,14 @@ function cursorAfterMove(sections, index, dx, dy, columns) {
     }
     if (dy > 0) {
       if (p + cols < shown) return at + cols
+      // A shorter last row below: land on its last member rather than skip it.
+      if (Math.floor(p / cols) < Math.floor((shown - 1) / cols)) return end - 1
       return Math.min(total - 1, end)
     }
     if (dy < 0) {
       if (p - cols >= 0) return at - cols
-      return hasHeader ? sec.rowIndex : Math.max(0, at - 1)
+      // The ungrouped run is always first, so its top row has nothing above.
+      return hasHeader ? sec.rowIndex : at
     }
     return at
   }

@@ -1063,8 +1063,22 @@ test("cursorAfterMove steps a grid row at a time across three columns", function
   assert.strictEqual(M.cursorAfterMove(secs, 7, 0, -1, 3), 4, "up a row")
   assert.strictEqual(M.cursorAfterMove(secs, 5, 0, -1, 3), 3, "up from the top row is the header")
   assert.strictEqual(M.cursorAfterMove(secs, 1, 0, 1, 3), 3, "down from the loose run's only row is the next header")
-  assert.strictEqual(M.cursorAfterMove(secs, 1, 0, -1, 3), 0, "up from the very top clamps")
+  assert.strictEqual(M.cursorAfterMove(secs, 1, 0, -1, 3), 1, "up from the very top stays put")
   assert.strictEqual(M.cursorAfterMove(secs, 3, 0, -1, 3), 2, "up from a header is the previous section's last row")
+})
+
+test("cursorAfterMove does not skip a shorter last row when a section follows", function () {
+  // Group A is three wide in two columns, then group B:
+  //   #A        <- row 0
+  //   1 2
+  //   3
+  //   #B        <- row 4
+  var conns = [["a", "A"], ["b", "A"], ["c", "A"], ["d", "B"]].map(function (p) {
+    return { id: p[0], host: "h", user: "u", group: p[1] }
+  })
+  var secs = M.listSections(conns, {})
+  assert.strictEqual(M.cursorAfterMove(secs, 2, 0, 1, 2), 3, "down from the top right lands on the lone row below")
+  assert.strictEqual(M.cursorAfterMove(secs, 3, 0, 1, 2), 4, "down from the last row is the next header")
 })
 
 test("cursorAfterMove steps sideways within a section and stops at its edge", function () {
