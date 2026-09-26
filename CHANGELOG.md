@@ -5,6 +5,47 @@
      conflict over this file. The release commit renames this heading to the
      version and bumps manifest.json, so the number is chosen from what
      actually shipped rather than guessed when the branch was opened. -->
+## 0.7.0
+
+### Added
+
+- The connection list also opens as a window. Hyprland tiles it like any other
+  app, and it stays open while you work elsewhere. Open it with a middle-click
+  on the bar icon, `w` in the panel, or the button in the panel's header
+  ([#35](https://github.com/cahva/omarchy-rdp-manager/pull/35), contributed by @WaltRiceJr). Three new IPC commands control
+  it: `window` shows it, brings it forward, or hides it when it already has
+  focus, so it is the one to bind to a key. `show` and `hide` do only that.
+- Connections can have a `group`. The list shows each group under its own
+  heading, after the ungrouped connections. Enter or a click folds and unfolds
+  a heading, `h` folds it and `l` unfolds it, and a folded heading shows how
+  many connections it hides. The form's Group dropdown lists every group in
+  use plus "new group...", so a typo cannot split one group in two
+  ([#36](https://github.com/cahva/omarchy-rdp-manager/pull/36), contributed by @WaltRiceJr).
+
+### Changed
+
+- In the window, the connections in a group sit side by side in as many
+  columns as fit, and the groups still stack. `h` and `l` move sideways, `j`
+  and `k` move a row. The popup keeps its single column
+  ([#38](https://github.com/cahva/omarchy-rdp-manager/pull/38), contributed by @WaltRiceJr).
+- The list, the form and the delete confirmation moved from `Panel.qml` into
+  `ConnectionsView.qml`, which the popup and the window share. `Panel.qml` now
+  holds only the bar button and the popup ([#35](https://github.com/cahva/omarchy-rdp-manager/pull/35)).
+- `dev-install.sh` is now `dev-sync.sh`, and the README names the `freerdp`
+  package instead of giving an install command ([#42](https://github.com/cahva/omarchy-rdp-manager/pull/42)). The
+  marketplace's automated check read both as capabilities and sent every
+  verification to manual review.
+
+### Fixed
+
+- Esc backs out of the edit form from any control. It used to work only from a
+  text field and did nothing on a dropdown, toggle or button. Typing a letter
+  on a focused dropdown now picks the next option that starts with it, as a
+  native select does ([#37](https://github.com/cahva/omarchy-rdp-manager/pull/37), contributed by @WaltRiceJr).
+- A connection with the id `constructor` was dropped when connections.json
+  loaded, and a shared folder named `constructor` was rejected as a duplicate
+  ([#41](https://github.com/cahva/omarchy-rdp-manager/pull/41)).
+
 ## 0.6.0
 
 ### Added
