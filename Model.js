@@ -865,7 +865,8 @@ function heroMeta(connections, sessions) {
 // a stable case-sensitive tiebreak so "work" and "Work" never swap places.
 function groupNames(connections) {
   var list = asList(connections)
-  var seen = {}
+  // No prototype, or "toString" and "constructor" read as already seen.
+  var seen = Object.create(null)
   var out = []
   for (var i = 0; i < list.length; i++) {
     var g = trim(list[i] ? list[i].group : "")

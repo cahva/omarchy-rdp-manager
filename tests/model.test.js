@@ -970,6 +970,15 @@ test("groupNames lists each group once, sorted without regard to case", function
   assert.deepStrictEqual(M.groupNames([]), [])
 })
 
+test("a group named after an Object.prototype member is still a group", function () {
+  var conns = [
+    { id: "a", host: "h", user: "u", group: "toString" },
+    { id: "b", host: "h", user: "u", group: "constructor" },
+  ]
+  assert.deepStrictEqual(M.groupNames(conns), ["constructor", "toString"])
+  assert.strictEqual(M.listRows(conns, {}).length, 4)
+})
+
 test("listRows puts ungrouped connections first, then each group under a header", function () {
   var a = { id: "a", host: "h", user: "u", group: "Work" }
   var b = { id: "b", host: "h", user: "u" }
