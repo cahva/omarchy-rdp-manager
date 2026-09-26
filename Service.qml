@@ -84,20 +84,9 @@ Item {
   readonly property bool windowVisible: windowLoader.item ? windowLoader.item.visible === true : false
   readonly property string windowTitle: "RDP Manager"
 
-  // The window is ours when Hyprland's active toplevel belongs to this process
-  // and carries our title — a browser tab called "RDP Manager" does not count.
-  readonly property bool windowFocused: windowVisible && Hyprland.activeToplevel !== null
-    && Number(Hyprland.activeToplevel.lastIpcObject.pid) === Quickshell.processId
-    && String(Hyprland.activeToplevel.title || "") === windowTitle
-
-  // A toplevel arrives with no IPC metadata, PID included, so the focus check
-  // above would say "not ours" for a window that just mapped. Re-read on open.
-  Connections {
-    target: Hyprland
-    function onRawEvent(event) {
-      if (event.name === "openwindow") Hyprland.refreshToplevels()
-    }
-  }
+  // Qt knows which of its windows has keyboard focus, so there is no need to
+  // match Hyprland's active toplevel by PID and title.
+  readonly property bool windowFocused: windowVisible && windowLoader.item.focused === true
 
   Loader {
     id: windowLoader

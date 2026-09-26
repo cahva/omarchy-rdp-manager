@@ -15,6 +15,10 @@ FloatingWindow {
 
   property var svc: null
 
+  // True while this window has keyboard focus. Service.qml reads it to decide
+  // whether `window` should bring the window forward or hide it.
+  readonly property bool focused: view.Window.active
+
   title: "RDP Manager"
   color: Color.background
   implicitWidth: 720
